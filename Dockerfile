@@ -14,7 +14,7 @@ RUN go mod download
 COPY *.go ./
 
 # 编译应用，禁用 CGO 以创建静态链接的二进制文件
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o rss-server .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o web2rss .
 
 # ---
 
@@ -30,10 +30,10 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app/
 
 # 从 builder 阶段复制编译好的二进制文件
-COPY --from=builder /app/rss-server .
+COPY --from=builder /app/web2rss .
 
 # 暴露端口
 EXPOSE 8888
 
 # 运行应用
-CMD ["./rss-server"]
+CMD ["./web2rss"]

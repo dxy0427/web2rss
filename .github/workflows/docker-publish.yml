@@ -1,0 +1,49 @@
+# 工作流的名称，会显示在 GitHub Actions 页面
+name: Docker Image CI
+
+# 触发工作流的事件
+on:
+  # 当有代码推送到 main 分支时触发
+  push:
+    branches: [ "main" ]
+  # 允许你手动从 Actions 页面触发此工作流
+  workflow_dispatch:
+
+# 定义一个或多个作业
+jobs:
+  # 作业的唯一ID
+  build-and-push:
+    # 此作业运行在 GitHub 托管的最新版 Ubuntu 虚拟机上
+    runs-on: ubuntu-latest
+
+    # 【重要】为作业授予权限，以便它可以读取仓库内容并写入 GitHub Packages (GHCR)
+    permissions:
+      contents: read
+      packages: write
+
+    # 作业的步骤
+    steps:
+      # 第一步：检出（拉取）你的仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 第二步：登录到 GitHub Container Registry (GHCR)
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          # github.actor 是触发工作流的用户的用户名
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN 是 GitHub Actions 自动生成的秘密令牌，用于认证
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 第三步：构建 Docker 镜像并推送到 GHCR
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          # context: . 表示 Dockerfile 位于仓库的根目录
+          context: .
+          # push: true 表示构建成功后要推送到仓库
+          push: true
+          # tags: 定义镜像的标签。这里我们使用你提供的名称
+          tags: ghcr.io/dxy0427/web2rss:latest

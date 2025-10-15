@@ -12,11 +12,16 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gorilla/feeds"
 	"github.com/gorilla/mux"
+	"github.com/patrickmn/go-cache" // 1. 引入缓存库
 )
 
+// 2. 定义一个全局的缓存实例
+// 缓存项默认5分钟过期，每10分钟清理一次过期项
+var c = cache.New(5*time.Minute, 10*time.Minute)
+
 const (
-	siteName = "BT影视"
-	baseURL  = "https://www.btbtla.com"
+	siteName  = "BT影视"
+	baseURL   = "https://www.btbtla.com"
 	detailURL = baseURL + "/detail/%s.html"
 )
 
@@ -29,11 +34,11 @@ type ResourceInfo struct {
 
 // PageInfo 存储整个页面的共享信息和所有资源
 type PageInfo struct {
-	Title      string
-	Type       string
-	Year       string
-	DetailURL  string
-	Resources  []ResourceInfo
+	Title     string
+	Type      string
+	Year      string
+	DetailURL string
+	Resources []ResourceInfo
 }
 
 // ScrapeBtMovie 函数负责抓取和解析
@@ -82,7 +87,6 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 		}
 		
 		resourceTitle := strings.TrimSpace(s.Find("h4").Text())
-		// 清理标题中的大小信息，让RSS标题更干净
 		re := regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB)\]$`)
 		resourceTitle = re.ReplaceAllString(resourceTitle, "")
 
@@ -156,6 +160,18 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("接收到请求, Resource ID: %s", resourceID)
 
+	// 3. 在处理请求前，先检查缓存
+	if rss, found := c.Get(resourceID); found {
+		log.Printf("缓存命中, Resource ID: %s", resourceID)
+		w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(rss.([]byte))
+		return
+	}
+
+	log.Printf("缓存未命中, 开始实时抓取, Resource ID: %s", resourceID)
+	// --- 如果缓存未命中，执行以下逻辑 ---
+
 	now := time.Now()
 	feed := &feeds.Feed{
 		Title:       fmt.Sprintf("%s RSS Feed - %s", siteName, resourceID),
@@ -165,15 +181,14 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		Created:     now,
 	}
 	
-	detailURL := fmt.Sprintf(detailURL, resourceID)
 	pageInfo, err := ScrapeBtMovie(resourceID)
 
 	if err != nil {
 		log.Printf("抓取或解析过程中发生错误: %v", err)
 		item := &feeds.Item{
-			Id:          detailURL,
+			Id:          fmt.Sprintf(detailURL, resourceID),
 			Title:       fmt.Sprintf("[%s] 资源 %s 处理失败", siteName, resourceID),
-			Link:        &feeds.Link{Href: detailURL},
+			Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
 			Description: fmt.Sprintf("错误: %v", err),
 			Created:     now,
 		}
@@ -196,16 +211,21 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rss, err := feed.ToRss()
+	rssString, err := feed.ToRss()
 	if err != nil {
 		log.Printf("生成RSS XML失败: %v", err)
 		http.Error(w, "Failed to generate RSS feed", http.StatusInternalServerError)
 		return
 	}
 
+	rssBytes := []byte(rssString)
+	// 4. 将新生成的结果存入缓存
+	c.Set(resourceID, rssBytes, cache.DefaultExpiration)
+	log.Printf("已将结果存入缓存, Resource ID: %s", resourceID)
+
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(rss))
+	_, _ = w.Write(rssBytes)
 	log.Printf("成功响应请求, Resource ID: %s", resourceID)
 }
 

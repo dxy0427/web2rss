@@ -319,7 +319,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 				Created:     now,
 			}
 			feed.Items = append(feed.Items, item)
-			rssBytes, _ = feed.ToRss()
+			rssBytes = []byte(feed.ToRss())
 			c.Set(cacheKey, rssBytes, 5*time.Minute)
 			log.Printf("已将失败结果存入缓存, Key: %s", cacheKey)
 		} else {
@@ -339,7 +339,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				feed.Items = append(feed.Items, item)
 			}
-			rssBytes, _ = feed.ToRss()
+			rssBytes = []byte(feed.ToRss())
 			c.Set(cacheKey, rssBytes, cache.DefaultExpiration)
 			log.Printf("已将成功结果存入缓存, Key: %s", cacheKey)
 		}
@@ -353,7 +353,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 			Created:     now,
 		}
 		feed.Items = append(feed.Items, item)
-		rssBytes, _ = feed.ToRss()
+		rssBytes = []byte(feed.ToRss())
 		c.Set(cacheKey, rssBytes, 5*time.Minute)
 		log.Printf("已将超时结果存入缓存, Key: %s", cacheKey)
 	}

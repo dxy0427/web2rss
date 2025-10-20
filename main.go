@@ -141,21 +141,27 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 	var mu sync.Mutex
 	sem := make(chan struct{}, maxConcurrency)
 	failCount := 0
+	filterCount := 0 // 原skipCount改为filterCount（过滤数）
 	totalLinks := doc.Find("a.module-row-text.copy").Length()
 	log.Printf("资源 %s 共找到 %d 个下载链接，并发数限制为 %d", resourceID, totalLinks, maxConcurrency)
 	if totalLinks == 0 {
-		return pageInfo, fmt.Errorf("未找到任何下载链接")
+		return pageInfo, nil // 无链接时不返回错误，避免错误日志
 	}
 
-	doc.Find("a.module-row-text.copy").Each(func(i int, s *goquery.Selection) {
+	links := doc.Find("a.module-row-text.copy")
+	for i := 0; i < links.Length(); i++ {
+		s := links.Eq(i)
 		downloadPath, exists := s.Attr("href")
 		if !exists {
-			return
+			continue
 		}
 
+		// 网盘链接计入“过滤数”，不打印单条日志
 		if strings.Contains(downloadPath, "/pdown/") {
-			log.Printf("资源 %s 第%d个链接是网盘链接，跳过：%s", resourceID, i+1, downloadPath)
-			return
+			mu.Lock()
+			filterCount++
+			mu.Unlock()
+			continue
 		}
 
 		resourceTitle := strings.TrimSpace(s.Find("h4").Text())
@@ -166,7 +172,7 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 		}
 
 		wg.Add(1)
-		go func(path, title string, index int) {
+		go func(path, title string) {
 			sem <- struct{}{}
 			defer func() {
 				wg.Done()
@@ -174,11 +180,8 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 			}()
 
 			downloadURL := baseURL + path
-			log.Printf("开始抓取资源 %s 第%d个下载页：%s", resourceID, index, downloadURL)
-
 			respDown, err := httpGetWithRetry(downloadURL)
 			if err != nil {
-				log.Printf("资源 %s 第%d个下载页抓取失败：%v", resourceID, index, err)
 				mu.Lock()
 				failCount++
 				mu.Unlock()
@@ -186,7 +189,6 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 			}
 			defer respDown.Body.Close()
 			if respDown.StatusCode != http.StatusOK {
-				log.Printf("资源 %s 第%d个下载页返回非200状态码：%d", resourceID, index, respDown.StatusCode)
 				mu.Lock()
 				failCount++
 				mu.Unlock()
@@ -195,7 +197,6 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 
 			docDown, err := goquery.NewDocumentFromReader(respDown.Body)
 			if err != nil {
-				log.Printf("资源 %s 第%d个下载页解析失败：%v", resourceID, index, err)
 				mu.Lock()
 				failCount++
 				mu.Unlock()
@@ -211,7 +212,6 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 				magnetLink = docDown.Find("a[data-magnet]").AttrOr("data-magnet", "")
 			}
 			if magnetLink == "" {
-				log.Printf("警告：资源 %s 第%d个下载页未找到磁力链接", resourceID, index)
 				mu.Lock()
 				failCount++
 				mu.Unlock()
@@ -232,17 +232,15 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 				Size:          size,
 			})
 			mu.Unlock()
-		}(downloadPath, resourceTitle, i+1)
-	})
+		}(downloadPath, resourceTitle)
+	}
 
 	wg.Wait()
 	close(sem)
 
-	successCount := totalLinks - failCount
-	log.Printf("资源 %s 抓取完成：成功%d个，失败%d个", resourceID, successCount, failCount)
-	if successCount == 0 {
-		return pageInfo, fmt.Errorf("所有下载页抓取失败（共%d个）", totalLinks)
-	}
+	// 汇总日志：“跳过”改为“过滤”，且不返回错误（避免错误日志）
+	successCount := totalLinks - failCount - filterCount
+	log.Printf("资源 %s 抓取完成：成功%d个，失败%d个，过滤%d个", resourceID, successCount, failCount, filterCount)
 	return pageInfo, nil
 }
 
@@ -309,6 +307,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case res := <-resultChan:
 		pageInfo, err := res.pageInfo, res.err
+		// 只处理“详情页请求/解析失败”的错误，去掉“所有链接过滤”的错误日志
 		if err != nil {
 			log.Printf("抓取或解析过程中发生错误: %v", err)
 			item := &feeds.Item{
@@ -319,11 +318,6 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 				Created:     now,
 			}
 			feed.Items = append(feed.Items, item)
-			// 修正：显式接收ToRss()的两个返回值
-			rssStr, _ := feed.ToRss()
-			rssBytes = []byte(rssStr)
-			c.Set(cacheKey, rssBytes, 5*time.Minute)
-			log.Printf("已将失败结果存入缓存, Key: %s", cacheKey)
 		} else {
 			log.Printf("成功抓取 %d 个资源，生成RSS条目", len(pageInfo.Resources))
 			for _, resource := range pageInfo.Resources {
@@ -341,12 +335,17 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				feed.Items = append(feed.Items, item)
 			}
-			// 修正：显式接收ToRss()的两个返回值
-			rssStr, _ := feed.ToRss()
-			rssBytes = []byte(rssStr)
-			c.Set(cacheKey, rssBytes, cache.DefaultExpiration)
-			log.Printf("已将成功结果存入缓存, Key: %s", cacheKey)
 		}
+		rssStr, _ := feed.ToRss()
+		rssBytes = []byte(rssStr)
+		// 失败/成功结果均存入缓存，统一逻辑
+		c.Set(cacheKey, rssBytes, func() time.Duration {
+			if err != nil {
+				return 5 * time.Minute // 错误结果缓存5分钟
+			}
+			return cache.DefaultExpiration // 成功结果用默认缓存时间
+		}())
+		log.Printf("已将结果存入缓存, Key: %s", cacheKey)
 	case <-time.After(50 * time.Second):
 		log.Printf("资源 %s 抓取超时（50秒）", resourceID)
 		item := &feeds.Item{
@@ -357,7 +356,6 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 			Created:     now,
 		}
 		feed.Items = append(feed.Items, item)
-		// 修正：显式接收ToRss()的两个返回值
 		rssStr, _ := feed.ToRss()
 		rssBytes = []byte(rssStr)
 		c.Set(cacheKey, rssBytes, 5*time.Minute)

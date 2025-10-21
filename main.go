@@ -245,6 +245,10 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 }
 
 func rssHandler(w http.ResponseWriter, r *http.Request) {
+	// 新增：从环境变量读取超时时间（默认50秒，支持通过Docker调整）
+	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 50)
+	scrapeTimeout := time.Duration(timeoutSec) * time.Second
+
 	startTime := time.Now()
 	vars := mux.Vars(r)
 	resourceID := vars["resource_id"]
@@ -304,6 +308,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	var rssBytes []byte
+	// 关键修改：将固定50秒改为 scrapeTimeout（从环境变量读取）
 	select {
 	case res := <-resultChan:
 		pageInfo, err := res.pageInfo, res.err
@@ -346,13 +351,14 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 			return cache.DefaultExpiration // 成功结果用默认缓存时间
 		}())
 		log.Printf("已将结果存入缓存, Key: %s", cacheKey)
-	case <-time.After(50 * time.Second):
-		log.Printf("资源 %s 抓取超时（50秒）", resourceID)
+	// 这里改用 scrapeTimeout，不再是固定50秒
+	case <-time.After(scrapeTimeout):
+		log.Printf("资源 %s 抓取超时（%d秒）", resourceID, timeoutSec)
 		item := &feeds.Item{
 			Id:          fmt.Sprintf(detailURL, resourceID),
 			Title:       fmt.Sprintf("[%s] 资源 %s 抓取超时", siteName, resourceID),
 			Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
-			Description: "错误: 抓取超时，请5分钟后重试",
+			Description: fmt.Sprintf("错误: 抓取超时（%d秒），可通过 SCRAPE_TIMEOUT_SEC 延长超时时间", timeoutSec),
 			Created:     now,
 		}
 		feed.Items = append(feed.Items, item)

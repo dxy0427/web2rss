@@ -51,13 +51,18 @@ func getEnvStr(key, defaultValue string) string {
 func initHttpClient() {
 	retryMax = getEnvInt("RETRY_MAX", 2)
 	retryInterval = time.Duration(getEnvInt("RETRY_INTERVAL_SEC", 1)) * time.Second
+
 	maxConcurrency = getEnvInt("MAX_CONCURRENCY", 3)
+	if maxConcurrency < 1 {
+		log.Println("警告：MAX_CONCURRENCY < 1，强制设为 1")
+		maxConcurrency = 1
+	}
 
 	httpClient = &http.Client{
 		Timeout: 20 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:    10,
-			IdleConnTimeout: 30 * time.Second,
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
 			DisableCompression: false,
 		},
 	}
@@ -141,11 +146,11 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 	var mu sync.Mutex
 	sem := make(chan struct{}, maxConcurrency)
 	failCount := 0
-	filterCount := 0 // 原skipCount改为filterCount（过滤数）
+	filterCount := 0
 	totalLinks := doc.Find("a.module-row-text.copy").Length()
 	log.Printf("资源 %s 共找到 %d 个下载链接，并发数限制为 %d", resourceID, totalLinks, maxConcurrency)
 	if totalLinks == 0 {
-		return pageInfo, nil // 无链接时不返回错误，避免错误日志
+		return pageInfo, nil
 	}
 
 	links := doc.Find("a.module-row-text.copy")
@@ -156,7 +161,6 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 			continue
 		}
 
-		// 网盘链接计入“过滤数”，不打印单条日志
 		if strings.Contains(downloadPath, "/pdown/") {
 			mu.Lock()
 			filterCount++
@@ -238,14 +242,12 @@ func ScrapeBtMovie(resourceID string) (*PageInfo, error) {
 	wg.Wait()
 	close(sem)
 
-	// 汇总日志：“跳过”改为“过滤”，且不返回错误（避免错误日志）
 	successCount := totalLinks - failCount - filterCount
 	log.Printf("资源 %s 抓取完成：成功%d个，失败%d个，过滤%d个", resourceID, successCount, failCount, filterCount)
 	return pageInfo, nil
 }
 
 func rssHandler(w http.ResponseWriter, r *http.Request) {
-	// 新增：从环境变量读取超时时间（默认50秒，支持通过Docker调整）
 	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 50)
 	scrapeTimeout := time.Duration(timeoutSec) * time.Second
 
@@ -308,17 +310,21 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	var rssBytes []byte
-	// 关键修改：将固定50秒改为 scrapeTimeout（从环境变量读取）
 	select {
 	case res := <-resultChan:
 		pageInfo, err := res.pageInfo, res.err
-		// 只处理“详情页请求/解析失败”的错误，去掉“所有链接过滤”的错误日志
+
+		// FIX: 防止 pageInfo 为 nil 导致后续 panic
+		if pageInfo == nil {
+			pageInfo = &PageInfo{Title: "", DetailURL: fmt.Sprintf(detailURL, resourceID)}
+		}
+
 		if err != nil {
 			log.Printf("抓取或解析过程中发生错误: %v", err)
 			item := &feeds.Item{
-				Id:          fmt.Sprintf(detailURL, resourceID),
+				Id:          pageInfo.DetailURL,
 				Title:       fmt.Sprintf("[%s] %s (抓取失败)", siteName, pageInfo.Title),
-				Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
+				Link:        &feeds.Link{Href: pageInfo.DetailURL},
 				Description: fmt.Sprintf("错误原因: %v | 资源类型: %s | 年份: %s", err, pageInfo.Type, pageInfo.Year),
 				Created:     now,
 			}
@@ -341,17 +347,22 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 				feed.Items = append(feed.Items, item)
 			}
 		}
-		rssStr, _ := feed.ToRss()
+
+		rssStr, rssErr := feed.ToRss()
+		if rssErr != nil {
+			log.Printf("生成RSS失败: %v", rssErr)
+			rssStr = fmt.Sprintf("<rss><channel><title>生成RSS失败: %v</title></channel></rss>", rssErr)
+		}
 		rssBytes = []byte(rssStr)
-		// 失败/成功结果均存入缓存，统一逻辑
+
 		c.Set(cacheKey, rssBytes, func() time.Duration {
 			if err != nil {
-				return 5 * time.Minute // 错误结果缓存5分钟
+				return 5 * time.Minute
 			}
-			return cache.DefaultExpiration // 成功结果用默认缓存时间
+			return cache.DefaultExpiration
 		}())
 		log.Printf("已将结果存入缓存, Key: %s", cacheKey)
-	// 这里改用 scrapeTimeout，不再是固定50秒
+
 	case <-time.After(scrapeTimeout):
 		log.Printf("资源 %s 抓取超时（%d秒）", resourceID, timeoutSec)
 		item := &feeds.Item{
@@ -362,7 +373,11 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 			Created:     now,
 		}
 		feed.Items = append(feed.Items, item)
-		rssStr, _ := feed.ToRss()
+		rssStr, rssErr := feed.ToRss()
+		if rssErr != nil {
+			log.Printf("生成超时RSS失败: %v", rssErr)
+			rssStr = "<rss><channel><title>超时且生成RSS失败</title></channel></rss>"
+		}
 		rssBytes = []byte(rssStr)
 		c.Set(cacheKey, rssBytes, 5*time.Minute)
 		log.Printf("已将超时结果存入缓存, Key: %s", cacheKey)

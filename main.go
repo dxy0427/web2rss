@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -26,7 +27,7 @@ var (
 	retryInterval  time.Duration
 	cacheLock      sync.Map
 	userAgents     []string
-	sizeRegex = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB)\]$`)
+	sizeRegex      = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB)\]$`)
 )
 
 func getEnvInt(key string, defaultValue int) int {
@@ -53,7 +54,7 @@ func getEnvStr(key, defaultValue string) string {
 func initHttpClient() {
 	retryMax = getEnvInt("RETRY_MAX", 2)
 	retryInterval = time.Duration(getEnvInt("RETRY_INTERVAL_SEC", 1)) * time.Second
-	maxConcurrency = getEnvInt("MAX_CONCURRENCY", 3)
+	maxConcurrency = getEnvInt("MAX_CONCURRENCY", math.MaxInt32)
 
 	httpClient = &http.Client{
 		Timeout: 20 * time.Second,
@@ -160,11 +161,11 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 	var mu sync.Mutex
 	sem := make(chan struct{}, maxConcurrency)
 	failCount := 0
-	filterCount := 0 
+	filterCount := 0
 	totalLinks := doc.Find("a.module-row-text.copy").Length()
 	log.Printf("资源 %s 共找到 %d 个下载链接，并发数限制为 %d", resourceID, totalLinks, maxConcurrency)
 	if totalLinks == 0 {
-		return pageInfo, nil 
+		return pageInfo, nil
 	}
 
 	links := doc.Find("a.module-row-text.copy")
@@ -263,7 +264,7 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 }
 
 func rssHandler(w http.ResponseWriter, r *http.Request) {
-	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 50)
+	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 60)
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
@@ -373,9 +374,9 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		
 		c.Set(cacheKey, rssBytes, func() time.Duration {
 			if err != nil {
-				return 5 * time.Minute 
+				return 5 * time.Minute
 			}
-			return cache.DefaultExpiration 
+			return cache.DefaultExpiration
 		}())
 		log.Printf("已将结果存入缓存, Key: %s", cacheKey)
 

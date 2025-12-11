@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -20,32 +19,37 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// 全局变量
+// ================= 全局变量与配置 =================
+
 var (
-	c                *cache.Cache
-	httpClient       *http.Client
-	maxConcurrency   int
-	retryMax         int
-	retryInterval    time.Duration
-	cacheLock        sync.Map
-	userAgents       []string
-	
-	// 正则表达式：用于提取大小和集数
-	// 匹配字符串末尾的 [12.3GB] 这种格式，用于清理标题
-	sizeRegex        = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB|KB)\]$`)
-	// 用于计算字节数
+	c             *cache.Cache
+	httpClient    *http.Client
+	maxConcurrency int
+	retryMax      int
+	retryInterval time.Duration
+	cacheLock     sync.Map
+	userAgents    []string
+
+	// 1. 大小清理正则：用于把 "天命大神皇... [12GB]" 还原为 "天命大神皇..."
+	sizeRegex = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB|KB)\]$`)
+
+	// 2. 大小提取正则：从 "12.5 GB" 提取数值和单位计算字节
 	sizeExtractRegex = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([GMK]B)`)
-	
-	// 集数匹配正则（优化括号匹配）
-	episodeFullRegex   = regexp.MustCompile(`\[\s*全(\d+)集\s*\]`)
-	episodeRangeRegex  = regexp.MustCompile(`\[\s*第(\d+)\s*-\s*(\d+)\s*集\s*\]`)
+
+	// 3. 集数匹配正则（支持带空格）
+	// 匹配：[全8集] 或 [ 全 08 集 ]
+	episodeFullRegex = regexp.MustCompile(`\[\s*全(\d+)集\s*\]`)
+	// 匹配：[第01-02集]
+	episodeRangeRegex = regexp.MustCompile(`\[\s*第(\d+)\s*-\s*(\d+)\s*集\s*\]`)
+	// 匹配：[第01集]
 	episodeSingleRegex = regexp.MustCompile(`\[\s*第(\d+)\s*集\s*\]`)
-	
+
 	// 时间格式
 	timeLayout = "2006-01-02 15:04:05"
 )
 
-// 环境变量获取工具
+// ================= 工具函数 =================
+
 func getEnvInt(key string, defaultValue int) int {
 	valStr := os.Getenv(key)
 	if valStr == "" {
@@ -66,11 +70,10 @@ func getEnvStr(key, defaultValue string) string {
 	return val
 }
 
-// 初始化 HTTP 客户端
 func initHttpClient() {
 	retryMax = getEnvInt("RETRY_MAX", 2)
 	retryInterval = time.Duration(getEnvInt("RETRY_INTERVAL_SEC", 1)) * time.Second
-	maxConcurrency = getEnvInt("MAX_CONCURRENCY", 10) // 默认并发 10
+	maxConcurrency = getEnvInt("MAX_CONCURRENCY", 10)
 
 	httpClient = &http.Client{
 		Timeout: 20 * time.Second,
@@ -87,7 +90,6 @@ func initHttpClient() {
 	}
 }
 
-// 带重试的 HTTP GET
 func httpGetWithRetry(ctx context.Context, url string) (*http.Response, error) {
 	var resp *http.Response
 	var err error
@@ -103,7 +105,7 @@ func httpGetWithRetry(ctx context.Context, url string) (*http.Response, error) {
 
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 		req.Header.Set("User-Agent", userAgents[i%len(userAgents)])
-		// 添加 Referer 避免防盗链
+		// 添加 Referer 绕过部分防爬
 		if strings.Contains(url, "/tdown/") {
 			req.Header.Set("Referer", baseURL+"/")
 		}
@@ -129,12 +131,12 @@ const (
 	detailURL = baseURL + "/detail/%s.html"
 )
 
-// 资源类型常量，用于排序优先级
+// 资源类型优先级
 const (
-	resTypeFull   = 0 // 全集最优先
-	resTypeRange  = 1 // 合集次之
-	resTypeSingle = 2 // 单集最后
-	resTypeOther  = 9 // 其他
+	resTypeFull   = 0 // [全X集] - 第一梯队
+	resTypeRange  = 1 // [第X-Y集] - 第二梯队
+	resTypeSingle = 2 // [第X集] - 第三梯队
+	resTypeOther  = 9
 )
 
 type PageInfo struct {
@@ -144,21 +146,21 @@ type PageInfo struct {
 }
 
 type ResourceInfo struct {
-	ResourceTitle string    // 原始标题（用于显示）
+	ResourceTitle string    // 显示标题
 	Magnet        string    // 磁力链接
-	Size          string    // 字符串大小 (12.11GB)
-	Bytes         int64     // 字节大小 (用于 RSS length)
-	resType       int       // 类型 (0, 1, 2)
-	fullEpCount   int       // 全集数量
-	rangeStart    int       // 合集开始
+	Size          string    // 文本大小 (12.3GB)
+	Bytes         int64     // 字节大小
+	resType       int       // 类型
+	fullEpCount   int       // 全集集数
+	rangeStart    int       // 合集起始
 	rangeEnd      int       // 合集结束
 	singleEp      int       // 单集集数
-	titleRaw      string    // 原始标题备份
+	titleRaw      string    // 原始标题
 	SeedTime      time.Time // 发布时间
-	DetailPath    string    // 详情页路径
+	DetailPath    string    // 相对路径
 }
 
-// 将 12.3GB 转换为字节数
+// 文本大小转字节
 func parseSizeToBytes(sizeStr string) int64 {
 	s := strings.TrimSpace(sizeStr)
 	s = strings.ToUpper(s)
@@ -188,7 +190,7 @@ func parseSizeToBytes(sizeStr string) int64 {
 	return int64(val * multiplier)
 }
 
-// 解析资源类型（全集/合集/单集）
+// 解析资源类型
 func extractResourceType(title string) (int, int, int, int) {
 	// 匹配 [全8集]
 	fullMatches := episodeFullRegex.FindStringSubmatch(title)
@@ -212,7 +214,7 @@ func extractResourceType(title string) (int, int, int, int) {
 	return resTypeOther, 0, 0, 0
 }
 
-// 核心排序逻辑
+// ================= 核心排序逻辑 =================
 func sortResources(resources []ResourceInfo) []ResourceInfo {
 	if len(resources) <= 1 {
 		return resources
@@ -221,41 +223,49 @@ func sortResources(resources []ResourceInfo) []ResourceInfo {
 	copy(sorted, resources)
 
 	sort.Slice(sorted, func(i, j int) bool {
-		// 1. 先按类型排：全集 < 合集 < 单集
+		// 1. 先按类型梯队排序：全集(0) < 合集(1) < 单集(2)
 		if sorted[i].resType != sorted[j].resType {
 			return sorted[i].resType < sorted[j].resType
 		}
-		// 2. 如果都是全集，集数多的在前面 (降序)
+
+		// 2. 第一梯队：全集
+		// 规则：按集数升序 (10集 < 20集)，所以 10集在前，20集在后
 		if sorted[i].resType == resTypeFull {
-			return sorted[i].fullEpCount > sorted[j].fullEpCount
+			return sorted[i].fullEpCount < sorted[j].fullEpCount
 		}
-		// 3. 如果都是合集，按起始集升序，起始相同按结束集升序
+
+		// 3. 第二梯队：合集
+		// 规则：按起始集升序 (Start 1 < Start 10)
 		if sorted[i].resType == resTypeRange {
 			if sorted[i].rangeStart != sorted[j].rangeStart {
 				return sorted[i].rangeStart < sorted[j].rangeStart
 			}
 			return sorted[i].rangeEnd < sorted[j].rangeEnd
 		}
-		// 4. 如果都是单集，按集数升序
+
+		// 4. 第三梯队：单集
+		// 规则：按集数升序 (Ep 1 < Ep 2)
 		if sorted[i].resType == resTypeSingle {
 			return sorted[i].singleEp < sorted[j].singleEp
 		}
-		// 5. 其他情况按标题字符串排序
+
+		// 5. 其他：按标题字符串排序
 		return sorted[i].titleRaw < sorted[j].titleRaw
 	})
 	return sorted
 }
 
-// 爬虫主逻辑
+// ================= 爬虫逻辑 =================
+
 func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 	pageInfo := &PageInfo{
 		DetailURL: fmt.Sprintf(detailURL, resourceID),
 	}
-	
-	// 1. 获取主列表页
+
+	// 1. 抓取列表页
 	resp, err := httpGetWithRetry(ctx, pageInfo.DetailURL)
 	if err != nil {
-		return pageInfo, err // 返回已初始化的对象，避免外部空指针
+		return pageInfo, err
 	}
 	defer resp.Body.Close()
 
@@ -266,31 +276,31 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 
 	pageInfo.Title = strings.TrimSpace(doc.Find("h1.page-title").First().Text())
 	links := doc.Find("a.module-row-text.copy")
-	
+
 	if links.Length() == 0 {
 		return pageInfo, nil
 	}
 
-	// 2. 并发抓取下载页
+	// 2. 并发抓取详情
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	// 限制并发数
 	sem := make(chan struct{}, maxConcurrency)
-	
+
 	for i := 0; i < links.Length(); i++ {
 		if ctx.Err() != nil {
 			break
 		}
 		s := links.Eq(i)
 		path, exists := s.Attr("href")
+		// 过滤无效链接或网盘链接
 		if !exists || strings.Contains(path, "/pdown/") {
-			continue // 跳过网盘
+			continue
 		}
 
 		rawTitle := strings.TrimSpace(s.Find("h4").Text())
-		// 清理标题后面的 [XXGB] 用于判断类型，但保留 rawTitle 用于输出
+		// 清理末尾 [XXGB] 以便正则匹配，但保留 rawTitle 用于 RSS 显示
 		cleanTitle := sizeRegex.ReplaceAllString(rawTitle, "")
-		
+
 		rType, fullEp, rStart, singleEp := extractResourceType(cleanTitle)
 		rEnd := 0
 		if rType == resTypeRange {
@@ -303,8 +313,6 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 		wg.Add(1)
 		go func(downPath, titleStr string, rt, fEp, rs, re, se int) {
 			defer wg.Done()
-			
-			// 获取信号量
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
@@ -333,14 +341,12 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 				return
 			}
 
-			// 提取大小 (文本可能在多个位置)
+			// 提取大小
 			sizeStr := "0B"
 			sizeText := downDoc.Find(".video-info-item").FilterFunction(func(i int, s *goquery.Selection) bool {
 				return strings.Contains(s.Text(), "影片大小") || strings.Contains(s.Prev().Text(), "影片大小")
 			}).Text()
-			// 清理提取到的文本
 			if sizeText != "" {
-				// 有时候文本是 "影片大小：12.3GB"，需要处理
 				parts := strings.Split(sizeText, "：")
 				if len(parts) > 1 {
 					sizeStr = strings.TrimSpace(parts[1])
@@ -353,7 +359,6 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 			timeStr := downDoc.Find(".video-info-item").FilterFunction(func(i int, s *goquery.Selection) bool {
 				return strings.Contains(s.Text(), "种子时间") || strings.Contains(s.Prev().Text(), "种子时间")
 			}).Text()
-			
 			seedTime := time.Now()
 			if timeStr != "" {
 				parts := strings.Split(timeStr, "：")
@@ -387,18 +392,17 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 	}
 
 	wg.Wait()
-	// 排序
 	pageInfo.Resources = sortResources(pageInfo.Resources)
 	return pageInfo, nil
 }
 
-// RSS 处理句柄
+// ================= HTTP 处理 =================
+
 func rssHandler(w http.ResponseWriter, r *http.Request) {
 	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 60)
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
-	// 1. 获取路径参数 (修复了之前的BUG)
 	vars := mux.Vars(r)
 	resourceID := vars["resource_id"]
 	if resourceID == "" {
@@ -406,17 +410,17 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := "bt_rss_v2_" + resourceID
+	cacheKey := "bt_rss_v3_" + resourceID
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 
-	// 2. 检查缓存
+	// 缓存查询
 	if rss, found := c.Get(cacheKey); found {
 		w.WriteHeader(http.StatusOK)
 		w.Write(rss.([]byte))
 		return
 	}
 
-	// 3. 防击穿锁
+	// 锁机制
 	lockKey := "lock_" + resourceID
 	lockVal, _ := cacheLock.LoadOrStore(lockKey, &sync.Mutex{})
 	lock := lockVal.(*sync.Mutex)
@@ -426,14 +430,13 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		cacheLock.Delete(lockKey)
 	}()
 
-	// 二次检查缓存
 	if rss, found := c.Get(cacheKey); found {
 		w.WriteHeader(http.StatusOK)
 		w.Write(rss.([]byte))
 		return
 	}
 
-	// 4. 执行抓取
+	// 执行抓取
 	type result struct {
 		info *PageInfo
 		err  error
@@ -456,11 +459,10 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		err = ctx.Err()
 	}
 
-	// 5. 构建 RSS (安全构建，防止 panic)
 	if pageInfo == nil {
 		pageInfo = &PageInfo{DetailURL: fmt.Sprintf(detailURL, resourceID), Title: "未知资源"}
 	}
-	
+
 	feedTitle := pageInfo.Title
 	if feedTitle == "" {
 		feedTitle = fmt.Sprintf("BT资源 - %s", resourceID)
@@ -474,25 +476,21 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		// 错误处理项
 		feed.Items = append(feed.Items, &feeds.Item{
 			Title:       fmt.Sprintf("抓取失败: %s", feedTitle),
-			Description: fmt.Sprintf("错误信息: %v", err),
+			Description: fmt.Sprintf("错误: %v", err),
 			Link:        &feeds.Link{Href: pageInfo.DetailURL},
 			Created:     time.Now(),
 		})
 	} else {
-		// 成功添加项
 		for _, res := range pageInfo.Resources {
-			// 严格按照你要求的 XML 格式
-			// GUID = 标题 (isPermaLink=false)
-			// Description = 标题 [大小]
+			// 生成符合要求的 XML 结构
 			item := &feeds.Item{
 				Title:       res.titleRaw,
 				Link:        &feeds.Link{Href: baseURL + res.DetailPath},
 				Description: fmt.Sprintf("%s [%s]", res.titleRaw, res.Size),
-				Id:          res.titleRaw, // 设置 GUID 为标题
-				Created:     res.SeedTime, // 这里的 Created 会被转换为 pubDate
+				Id:          res.titleRaw, // 使用标题作为GUID
+				Created:     res.SeedTime,
 				Enclosure: &feeds.Enclosure{
 					Url:    res.Magnet,
 					Type:   "application/x-bittorrent",
@@ -503,23 +501,18 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 6. 生成 XML
 	rssStr, rssErr := feed.ToRss()
 	if rssErr != nil {
 		http.Error(w, "RSS Generation Error", http.StatusInternalServerError)
 		return
 	}
 
-	// 移除 feeds 库默认带的 content 命名空间引用，保持 XML 简洁 (与你样例一致)
+	// 清理冗余命名空间，并设置 GUID isPermaLink="false"
 	rssStr = strings.Replace(rssStr, ` xmlns:content="http://purl.org/rss/1.0/modules/content/"`, "", 1)
-	
-	// 手动替换 GUID 的属性，确保 isPermaLink="false" (feeds 库默认可能是 true)
-	// 这是一个简单的字符串替换 hack，因为 gorilla/feeds 默认行为较难更改
 	rssStr = strings.ReplaceAll(rssStr, `<guid>`, `<guid isPermaLink="false">`)
 
 	rssBytes := []byte(rssStr)
-	
-	// 写入缓存 (成功缓存长，失败缓存短)
+
 	c.Set(cacheKey, rssBytes, func() time.Duration {
 		if err != nil {
 			return 5 * time.Minute
@@ -538,9 +531,9 @@ func main() {
 	c = cache.New(time.Duration(defaultExpirationMinutes)*time.Minute, time.Duration(defaultExpirationMinutes*2)*time.Minute)
 
 	r := mux.NewRouter()
-	// 修复：必须包含 {resource_id} 变量
+	// 路由包含参数
 	r.HandleFunc("/rss/btmovie/{resource_id}", rssHandler)
-	
+
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte("BT影视RSS服务运行中\n示例：/rss/btmovie/44851494"))

@@ -122,7 +122,6 @@ func httpGetWithRetry(ctx context.Context, url string) (*http.Response, error) {
 const (
 	baseURL   = "https://www.btbtla.com"
 	detailURL = baseURL + "/detail/%s.html"
-	rssNamespace = "https://www.btbtla.com/rss/0.1/" // 恢复命名空间
 )
 
 const (
@@ -132,7 +131,6 @@ const (
 	resTypeOther
 )
 
-// 完整 PageInfo 结构体（含 DetailURL）
 type PageInfo struct {
 	Title     string
 	DetailURL string
@@ -453,7 +451,6 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 先获取 pageInfo
 	type result struct {
 		pageInfo *PageInfo
 		err      error
@@ -476,7 +473,6 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 创建 feed
 	feed := &feeds.Feed{
 		Title:       pageInfo.Title,
 		Link:        &feeds.Link{Href: pageInfo.DetailURL},
@@ -515,24 +511,10 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 					Length: lengthStr,
 				},
 			}
-
-			// 恢复 Mikan 风格 torrent 标签（gorilla/feeds v1.2.0 支持）
-			torrentElem := &feeds.Element{
-				Namespace: rssNamespace,
-				Name:      "torrent",
-				Children: []*feeds.Element{
-					{Name: "link", Value: baseURL + resource.DetailPath},
-					{Name: "contentLength", Value: lengthStr},
-					{Name: "pubDate", Value: resource.SeedTime.Format(mikanTimeLayout)},
-				},
-			}
-			item.Extensions = append(item.Extensions, torrentElem)
-
 			feed.Items = append(feed.Items, item)
 		}
 	}
 
-	// 生成 RSS 并清理多余命名空间
 	rssStr, err := feed.ToRss()
 	if err != nil {
 		log.Printf("生成RSS失败: %v", err)
@@ -542,7 +524,6 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	rssStr = strings.Replace(rssStr, ` xmlns:content="http://purl.org/rss/1.0/modules/content/"`, "", 1)
 	rssBytes = []byte(rssStr)
 
-	// 存入缓存
 	c.Set(cacheKey, rssBytes, func() time.Duration {
 		if err != nil {
 			return 5 * time.Minute

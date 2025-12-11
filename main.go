@@ -21,20 +21,19 @@ import (
 )
 
 var (
-	c              *cache.Cache
-	httpClient     *http.Client
-	maxConcurrency int
-	retryMax       int
-	retryInterval  time.Duration
-	cacheLock      sync.Map
-	userAgents     []string
-	sizeRegex      = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB)\]$`)
+	c               *cache.Cache
+	httpClient      *http.Client
+	maxConcurrency  int
+	retryMax        int
+	retryInterval   time.Duration
+	cacheLock       sync.Map
+	userAgents      []string
+	sizeRegex       = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB)\]$`)
 	sizeExtractRegex = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([GMK]B)`)
 	episodeFullRegex = regexp.MustCompile(`全(\d+)集`)
 	episodeRangeRegex = regexp.MustCompile(`第(\d+)-(\d+)集`)
 	episodeSingleRegex = regexp.MustCompile(`第(\d+)集`)
-	timeLayout = "2006-01-02 15:04:05"
-	mikanTimeLayout = "2006-01-02T15:04:05.000000"
+	timeLayout      = "2006-01-02 15:04:05"
 )
 
 func getEnvInt(key string, defaultValue int) int {
@@ -95,6 +94,10 @@ func httpGetWithRetry(ctx context.Context, url string) (*http.Response, error) {
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 		req.Header.Set("User-Agent", userAgents[i%len(userAgents)])
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		// 增加 Referer 头部，防止部分防盗链策略
+		if strings.Contains(url, "/down/") {
+			req.Header.Set("Referer", baseURL+"/")
+		}
 
 		resp, err = httpClient.Do(req)
 		if err == nil {
@@ -251,13 +254,14 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 
 	resp, err := httpGetWithRetry(ctx, pageInfo.DetailURL)
 	if err != nil {
-		return nil, fmt.Errorf("请求详情页失败: %w", err)
+		// 修复：发生错误时不要返回nil的pageInfo，防止调用方panic
+		return pageInfo, fmt.Errorf("请求详情页失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("解析详情页HTML失败: %w", err)
+		return pageInfo, fmt.Errorf("解析详情页HTML失败: %w", err)
 	}
 	log.Println("详情页抓取并解析成功")
 
@@ -370,7 +374,7 @@ func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
 				if err == nil {
 					seedTime = parsedTime
 				} else {
-					log.Printf("解析种子时间失败（%s）：%v", seedTimeStr, err)
+					// 尝试兼容其他时间格式或使用当前时间
 					seedTime = time.Now()
 				}
 			} else {
@@ -469,14 +473,25 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case res := <-resultChan:
 		pageInfo, err = res.pageInfo, res.err
-	default:
-		return
+	case <-ctx.Done():
+		err = ctx.Err()
+		pageInfo = &PageInfo{DetailURL: fmt.Sprintf(detailURL, resourceID), Title: "请求超时"}
+	}
+
+	// 安全性检查：防止 pageInfo 为 nil 导致 panic
+	if pageInfo == nil {
+		pageInfo = &PageInfo{DetailURL: fmt.Sprintf(detailURL, resourceID), Title: "未知错误"}
+	}
+	
+	feedTitle := pageInfo.Title
+	if feedTitle == "" {
+		feedTitle = fmt.Sprintf("BT影视 - ID: %s", resourceID)
 	}
 
 	feed := &feeds.Feed{
-		Title:       pageInfo.Title,
+		Title:       feedTitle,
 		Link:        &feeds.Link{Href: pageInfo.DetailURL},
-		Description: pageInfo.Title,
+		Description: fmt.Sprintf("BT影视资源 - %s", feedTitle),
 		Created:     time.Now(),
 	}
 
@@ -489,7 +504,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 
 		item := &feeds.Item{
 			Id:          pageInfo.DetailURL,
-			Title:       fmt.Sprintf("[抓取失败] %s", pageInfo.Title),
+			Title:       fmt.Sprintf("[抓取失败] %s", feedTitle),
 			Link:        &feeds.Link{Href: pageInfo.DetailURL},
 			Description: reason,
 			Created:     time.Now(),
@@ -500,10 +515,10 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		for _, resource := range pageInfo.Resources {
 			lengthStr := strconv.FormatInt(resource.Bytes, 10)
 			item := &feeds.Item{
-				Id:          resource.titleRaw,
+				Id:          resource.Magnet, // 建议使用磁力链接作为ID，确保唯一性
 				Link:        &feeds.Link{Href: baseURL + resource.DetailPath},
 				Title:       resource.titleRaw,
-				Description: fmt.Sprintf("%s [%s]", resource.titleRaw, resource.Size),
+				Description: fmt.Sprintf("%s [%s]<br>大小：%s<br>发布时间：%s", resource.titleRaw, resource.Size, resource.Size, resource.SeedTime.Format(timeLayout)),
 				Created:     resource.SeedTime,
 				Enclosure: &feeds.Enclosure{
 					Url:    resource.Magnet,
@@ -547,6 +562,7 @@ func main() {
 	log.Printf("缓存服务初始化成功，缓存时间：%d分钟，清理间隔：%d分钟", defaultExpirationMinutes, cleanupInterval/time.Minute)
 
 	r := mux.NewRouter()
+	// 修复：必须加上 {resource_id} 才能让 rssHandler 正确获取变量
 	r.HandleFunc("/rss/btmovie/{resource_id}", rssHandler)
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -122,7 +122,7 @@ func httpGetWithRetry(ctx context.Context, url string) (*http.Response, error) {
 const (
 	baseURL   = "https://www.btbtla.com"
 	detailURL = baseURL + "/detail/%s.html"
-	rssNamespace = "https://www.btbtla.com/rss/0.1/"
+	rssNamespace = "https://www.btbtla.com/rss/0.1/" // 恢复命名空间
 )
 
 const (
@@ -131,6 +131,13 @@ const (
 	resTypeSingle
 	resTypeOther
 )
+
+// 完整 PageInfo 结构体（含 DetailURL）
+type PageInfo struct {
+	Title     string
+	DetailURL string
+	Resources []ResourceInfo
+}
 
 type ResourceInfo struct {
 	ResourceTitle string
@@ -145,11 +152,6 @@ type ResourceInfo struct {
 	titleRaw      string
 	SeedTime      time.Time
 	DetailPath    string
-}
-
-type PageInfo struct {
-	Title     string
-	Resources []ResourceInfo
 }
 
 func parseSizeToBytes(sizeStr string) int64 {
@@ -244,7 +246,9 @@ func sortResources(resources []ResourceInfo) []ResourceInfo {
 }
 
 func ScrapeBtMovie(ctx context.Context, resourceID string) (*PageInfo, error) {
-	pageInfo := &PageInfo{DetailURL: fmt.Sprintf(detailURL, resourceID)}
+	pageInfo := &PageInfo{
+		DetailURL: fmt.Sprintf(detailURL, resourceID),
+	}
 	log.Printf("开始抓取详情页: %s", pageInfo.DetailURL)
 
 	resp, err := httpGetWithRetry(ctx, pageInfo.DetailURL)
@@ -449,13 +453,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	feed := &feeds.Feed{
-		Title:       pageInfo.Title,
-		Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
-		Description: pageInfo.Title,
-		Created:     time.Now(),
-	}
-
+	// 先获取 pageInfo
 	type result struct {
 		pageInfo *PageInfo
 		err      error
@@ -468,90 +466,90 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	var rssBytes []byte
+	var pageInfo *PageInfo
+	var err error
 
 	select {
 	case res := <-resultChan:
-		pageInfo, err := res.pageInfo, res.err
-		if err != nil {
-			log.Printf("抓取或解析过程中发生错误: %v", err)
-			reason := fmt.Sprintf("%v", err)
-			if ctx.Err() == context.DeadlineExceeded {
-				reason = "抓取时间过长，已触发超时限制"
-			}
+		pageInfo, err = res.pageInfo, res.err
+	default:
+		return
+	}
 
-			item := &feeds.Item{
-				Id:          fmt.Sprintf(detailURL, resourceID),
-				Title:       fmt.Sprintf("[抓取失败] %s", pageInfo.Title),
-				Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
-				Description: reason,
-				Created:     time.Now(),
-			}
-			feed.Items = append(feed.Items, item)
-		} else {
-			log.Printf("成功抓取 %d 个资源，排序后生成RSS条目", len(pageInfo.Resources))
-			for _, resource := range pageInfo.Resources {
-				lengthStr := strconv.FormatInt(resource.Bytes, 10)
-				item := &feeds.Item{
-					Id:          resource.titleRaw,
-					Link:        &feeds.Link{Href: baseURL + resource.DetailPath},
-					Title:       resource.titleRaw,
-					Description: fmt.Sprintf("%s [%s]", resource.titleRaw, resource.Size),
-					Created:     resource.SeedTime,
-					Enclosure: &feeds.Enclosure{
-						Url:    resource.Magnet,
-						Type:   "application/x-bittorrent",
-						Length: lengthStr,
-					},
-				}
+	// 创建 feed
+	feed := &feeds.Feed{
+		Title:       pageInfo.Title,
+		Link:        &feeds.Link{Href: pageInfo.DetailURL},
+		Description: pageInfo.Title,
+		Created:     time.Now(),
+	}
 
-				torrentElem := &feeds.Element{
-					Namespace: rssNamespace,
-					Name:      "torrent",
-					Children: []*feeds.Element{
-						{Name: "link", Value: baseURL + resource.DetailPath},
-						{Name: "contentLength", Value: lengthStr},
-						{Name: "pubDate", Value: resource.SeedTime.Format(mikanTimeLayout)},
-					},
-				}
-				item.Extensions = append(item.Extensions, torrentElem)
-
-				feed.Items = append(feed.Items, item)
-			}
+	if err != nil {
+		log.Printf("抓取或解析过程中发生错误: %v", err)
+		reason := fmt.Sprintf("%v", err)
+		if ctx.Err() == context.DeadlineExceeded {
+			reason = "抓取时间过长，已触发超时限制"
 		}
 
-		rssStr, err := feed.ToRss()
-		if err != nil {
-			log.Printf("生成RSS失败: %v", err)
-			http.Error(w, "Failed to generate RSS", http.StatusInternalServerError)
-			return
-		}
-		rssStr = strings.Replace(rssStr, ` xmlns:content="http://purl.org/rss/1.0/modules/content/"`, "", 1)
-		rssBytes = []byte(rssStr)
-
-		c.Set(cacheKey, rssBytes, func() time.Duration {
-			if err != nil {
-				return 5 * time.Minute
-			}
-			return cache.DefaultExpiration
-		}())
-		log.Printf("已将结果存入缓存, Key: %s", cacheKey)
-
-	case <-ctx.Done():
-		log.Printf("资源 %s 抓取严重超时（%d秒）", resourceID, timeoutSec)
 		item := &feeds.Item{
-			Id:          fmt.Sprintf(detailURL, resourceID),
-			Title:       fmt.Sprintf("[抓取超时] %s", resourceID),
-			Link:        &feeds.Link{Href: fmt.Sprintf(detailURL, resourceID)},
-			Description: fmt.Sprintf("抓取超时（%d秒）", timeoutSec),
+			Id:          pageInfo.DetailURL,
+			Title:       fmt.Sprintf("[抓取失败] %s", pageInfo.Title),
+			Link:        &feeds.Link{Href: pageInfo.DetailURL},
+			Description: reason,
 			Created:     time.Now(),
 		}
 		feed.Items = append(feed.Items, item)
-		rssStr, _ := feed.ToRss()
-		rssStr = strings.Replace(rssStr, ` xmlns:content="http://purl.org/rss/1.0/modules/content/"`, "", 1)
-		rssBytes = []byte(rssStr)
-		c.Set(cacheKey, rssBytes, 5*time.Minute)
-		log.Printf("已将超时结果存入缓存, Key: %s", cacheKey)
+	} else {
+		log.Printf("成功抓取 %d 个资源，排序后生成RSS条目", len(pageInfo.Resources))
+		for _, resource := range pageInfo.Resources {
+			lengthStr := strconv.FormatInt(resource.Bytes, 10)
+			item := &feeds.Item{
+				Id:          resource.titleRaw,
+				Link:        &feeds.Link{Href: baseURL + resource.DetailPath},
+				Title:       resource.titleRaw,
+				Description: fmt.Sprintf("%s [%s]", resource.titleRaw, resource.Size),
+				Created:     resource.SeedTime,
+				Enclosure: &feeds.Enclosure{
+					Url:    resource.Magnet,
+					Type:   "application/x-bittorrent",
+					Length: lengthStr,
+				},
+			}
+
+			// 恢复 Mikan 风格 torrent 标签（gorilla/feeds v1.2.0 支持）
+			torrentElem := &feeds.Element{
+				Namespace: rssNamespace,
+				Name:      "torrent",
+				Children: []*feeds.Element{
+					{Name: "link", Value: baseURL + resource.DetailPath},
+					{Name: "contentLength", Value: lengthStr},
+					{Name: "pubDate", Value: resource.SeedTime.Format(mikanTimeLayout)},
+				},
+			}
+			item.Extensions = append(item.Extensions, torrentElem)
+
+			feed.Items = append(feed.Items, item)
+		}
 	}
+
+	// 生成 RSS 并清理多余命名空间
+	rssStr, err := feed.ToRss()
+	if err != nil {
+		log.Printf("生成RSS失败: %v", err)
+		http.Error(w, "Failed to generate RSS", http.StatusInternalServerError)
+		return
+	}
+	rssStr = strings.Replace(rssStr, ` xmlns:content="http://purl.org/rss/1.0/modules/content/"`, "", 1)
+	rssBytes = []byte(rssStr)
+
+	// 存入缓存
+	c.Set(cacheKey, rssBytes, func() time.Duration {
+		if err != nil {
+			return 5 * time.Minute
+		}
+		return cache.DefaultExpiration
+	}())
+	log.Printf("已将结果存入缓存, Key: %s", cacheKey)
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(rssBytes)

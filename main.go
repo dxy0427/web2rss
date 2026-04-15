@@ -193,7 +193,7 @@ func parseSizeToBytes(sizeStr string) int64 {
 func extractResourceType(title string) (int, int, int, int) {
 	fullMatches := episodeFullRegex.FindStringSubmatch(title)
 	if len(fullMatches) >= 2 {
-		epCount, _ := strconv.Atoi(fullMatches[1])
+		epCount, _ := strconv.Atoi(full[1])
 		return resTypeFull, epCount, 0, 0
 	}
 	rangeMatches := episodeRangeRegex.FindStringSubmatch(title)
@@ -331,7 +331,9 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	cacheKey := "bt_rss_v5_" + resourceID
 
-	if rss, found := c.Get(cacheKey) {
+	var rss interface{}
+	var found bool
+	if rss, found = c.Get(cacheKey); found {
 		w.Write(rss.([]byte))
 		log.Printf("响应完成，耗时：%s", time.Since(start))
 		return
@@ -343,7 +345,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	if rss, found := c.Get(cacheKey) {
+	if rss, found = c.Get(cacheKey); found {
 		w.Write(rss.([]byte))
 		log.Printf("响应完成，耗时：%s", time.Since(start))
 		return

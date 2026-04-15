@@ -53,7 +53,6 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 	val, err := strconv.Atoi(valStr)
 	if err != nil {
-		log.Printf("警告：环境变量 %s 无效，使用默认值 %d", key, defaultValue)
 		return defaultValue
 	}
 	return val
@@ -155,7 +154,7 @@ type ResourceInfo struct {
 }
 
 func searchNameToDetailPath(name string) string {
-	searchURL := baseURL + "/search/" + url.QueryEscape(name)
+	searchURL := baseURL + "/search/" + url.PathEscape(name)
 	log.Printf("开始搜索：%s", searchURL)
 	resp, err := httpGetWithRetry(context.Background(), searchURL)
 	if err != nil {
@@ -217,7 +216,7 @@ func sortResources(resources []ResourceInfo) []ResourceInfo {
 	sorted := make([]ResourceInfo, len(resources))
 	copy(sorted, resources)
 
-	sort.Slice(sorted, func(i, j int) bool {
+	sort.Slice(sorted, func(i, j int) {
 		if sorted[i].resType != sorted[j].resType {
 			return sorted[i].resType < sorted[j].resType
 		}
@@ -254,6 +253,7 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var failCount int
 	sem := make(chan struct{}, maxConcurrency)
 
 	links.Each(func(i int, s *goquery.Selection) {
@@ -279,8 +279,11 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			downResp, _ := httpGetWithRetry(ctx, baseURL+downPath)
-			if downResp == nil {
+			downResp, err := httpGetWithRetry(ctx, baseURL+downPath)
+			if downResp == nil || err != nil {
+				mu.Lock()
+				failCount++
+				mu.Unlock()
 				return
 			}
 			defer downResp.Body.Close()
@@ -311,11 +314,13 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 				DetailPath:    downPath,
 			})
 			mu.Unlock()
-			log.Printf("抓取成功：%s", titleStr)
 		}(downPath, rawTitle, rType, fullEp, rStart, rEnd, singleEp)
 	})
 
 	wg.Wait()
+	if failCount > 0 {
+		log.Printf("抓取失败：%d 个资源获取失败", failCount)
+	}
 	pageInfo.Resources = sortResources(pageInfo.Resources)
 	return pageInfo, nil
 }

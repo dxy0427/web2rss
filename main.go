@@ -30,7 +30,7 @@ var (
 	cacheLock        sync.Map
 	userAgents       []string
 	cstZone          *time.Location
-	idRegex          = regexp.MustCompile(`^\d+$`) // 自动判断 ID / 剧名
+	idRegex          = regexp.MustCompile(`^\d+$`)
 
 	sizeRegex         = regexp.MustCompile(`\s*\[[\d\.]+(?:GB|MB|TB|KB)\]$`)
 	sizeExtractRegex  = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([GMK]B)`)
@@ -156,6 +156,7 @@ type ResourceInfo struct {
 
 func searchNameToDetailPath(name string) string {
 	searchURL := baseURL + "/search/" + url.QueryEscape(name)
+	log.Printf("开始搜索：%s", searchURL)
 	resp, err := httpGetWithRetry(context.Background(), searchURL)
 	if err != nil {
 		return ""
@@ -163,7 +164,11 @@ func searchNameToDetailPath(name string) string {
 	defer resp.Body.Close()
 
 	doc, _ := goquery.NewDocumentFromReader(resp.Body)
-	return doc.Find(fmt.Sprintf(`.module-items .module-item-titlebox a[title="%s"]`, name)).AttrOr("href", "")
+	link := doc.Find(fmt.Sprintf(`.module-items .module-item .module-item-titlebox a[title="%s"]`, name)).AttrOr("href", "")
+	if link != "" {
+		log.Printf("搜索成功：%s → %s", name, link)
+	}
+	return link
 }
 
 func parseSizeToBytes(sizeStr string) int64 {
@@ -242,8 +247,10 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 
 	doc, _ := goquery.NewDocumentFromReader(resp.Body)
 	pageInfo.Title = cleanString(doc.Find("h1.page-title").First().Text())
+	log.Printf("解析标题：%s", pageInfo.Title)
 
 	links := doc.Find("div[name=download-list] .module-downlist.selected .module-row-one.active .module-row-info")
+	log.Printf("找到 %d 个资源", links.Length())
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -262,7 +269,7 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 		if rType == resTypeRange {
 			matches := episodeRangeRegex.FindStringSubmatch(rawTitle)
 			if len(matches) >= 3 {
-				rEnd, _ = strconv.Atoi(matches[2])
+				rEnd, _ := strconv.Atoi(matches[2])
 			}
 		}
 
@@ -304,6 +311,7 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 				DetailPath:    downPath,
 			})
 			mu.Unlock()
+			log.Printf("抓取成功：%s", titleStr)
 		}(downPath, rawTitle, rType, fullEp, rStart, rEnd, singleEp)
 	})
 
@@ -313,16 +321,19 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 }
 
 func rssHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 60)
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
 	resourceID := mux.Vars(r)["resource_id"]
+	log.Printf("收到请求：/rss/btmovie/%s", resourceID)
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	cacheKey := "bt_rss_v5_" + resourceID
 
-	if rss, found := c.Get(cacheKey); found {
+	if rss, found := c.Get(cacheKey) {
 		w.Write(rss.([]byte))
+		log.Printf("响应完成，耗时：%s", time.Since(start))
 		return
 	}
 
@@ -332,8 +343,9 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	if rss, found := c.Get(cacheKey); found {
+	if rss, found := c.Get(cacheKey) {
 		w.Write(rss.([]byte))
+		log.Printf("响应完成，耗时：%s", time.Since(start))
 		return
 	}
 
@@ -376,6 +388,7 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	rssBytes := []byte(rssStr)
 	c.Set(cacheKey, rssBytes, time.Duration(getEnvInt("CACHE_EXPIRATION_MINUTES", 15))*time.Minute)
 	w.Write(rssBytes)
+	log.Printf("响应完成，耗时：%s", time.Since(start))
 }
 
 func main() {

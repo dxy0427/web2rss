@@ -43,7 +43,7 @@ var (
 
 func cleanString(str string) string {
 	s := whitespaceRegex.ReplaceAllString(str, " ")
-	return strings.TrimSpace(s)
+	return strings.TrimSpace(str)
 }
 
 func getEnvInt(key string, defaultValue int) int {
@@ -216,7 +216,7 @@ func sortResources(resources []ResourceInfo) []ResourceInfo {
 	sorted := make([]ResourceInfo, len(resources))
 	copy(sorted, resources)
 
-	sort.Slice(sorted, func(i, j int) {
+	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].resType != sorted[j].resType {
 			return sorted[i].resType < sorted[j].resType
 		}

@@ -166,7 +166,7 @@ func searchNameToDetailPath(name string) string {
 	doc, _ := goquery.NewDocumentFromReader(resp.Body)
 	link := doc.Find(fmt.Sprintf(`.module-items .module-item .module-item-titlebox a[title="%s"]`, name)).AttrOr("href", "")
 	if link != "" {
-		log.Printf("搜索成功：%s → %s", name, link)
+		log.Printf("搜索成功：%s -> %s", name, link)
 	}
 	return link
 }
@@ -193,7 +193,7 @@ func parseSizeToBytes(sizeStr string) int64 {
 func extractResourceType(title string) (int, int, int, int) {
 	fullMatches := episodeFullRegex.FindStringSubmatch(title)
 	if len(fullMatches) >= 2 {
-		epCount, _ := strconv.Atoi(full[1])
+		epCount, _ := strconv.Atoi(fullMatches[1])
 		return resTypeFull, epCount, 0, 0
 	}
 	rangeMatches := episodeRangeRegex.FindStringSubmatch(title)
@@ -269,7 +269,7 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 		if rType == resTypeRange {
 			matches := episodeRangeRegex.FindStringSubmatch(rawTitle)
 			if len(matches) >= 3 {
-				rEnd, _ := strconv.Atoi(matches[2])
+				rEnd, _ = strconv.Atoi(matches[2])
 			}
 		}
 

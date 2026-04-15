@@ -42,7 +42,7 @@ var (
 )
 
 func cleanString(str string) string {
-	s := whitespaceRegex.ReplaceAllString(str, " ")
+	str = whitespaceRegex.ReplaceAllString(str, " ")
 	return strings.TrimSpace(str)
 }
 

@@ -61,8 +61,8 @@ func rssWithCache(w http.ResponseWriter, r *http.Request, cacheKey, lockPrefix, 
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 
 	// 第一次缓存检查
-	if rss, found := c.Get(cacheKey).([]byte); found {
-		w.Write(rss)
+	if cached, found := c.Get(cacheKey); found {
+		w.Write(cached.([]byte))
 		log.Printf("响应完成（缓存），耗时：%s", time.Since(start))
 		return
 	}
@@ -75,8 +75,8 @@ func rssWithCache(w http.ResponseWriter, r *http.Request, cacheKey, lockPrefix, 
 	defer lock.Unlock()
 
 	// 第二次缓存检查（锁内）
-	if rss, found := c.Get(cacheKey).([]byte); found {
-		w.Write(rss)
+	if cached, found := c.Get(cacheKey); found {
+		w.Write(cached.([]byte))
 		log.Printf("响应完成（缓存），耗时：%s", time.Since(start))
 		return
 	}

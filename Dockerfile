@@ -11,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # 复制所有源代码
-COPY *.go ./
+COPY . .
 
 # 编译应用，禁用 CGO 以创建静态链接的二进制文件
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o web2rss .

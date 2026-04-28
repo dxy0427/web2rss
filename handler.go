@@ -96,7 +96,7 @@ func rssWithCache(w http.ResponseWriter, r *http.Request, cacheKey, lockPrefix, 
 // rssHandler btbtla.com RSS 入口
 func rssHandler(w http.ResponseWriter, r *http.Request) {
 	resourceID := mux.Vars(r)["resource_id"]
-	log.Printf("收到请求：/rss/btmovie/%s", resourceID)
+	log.Printf("收到请求：/rss/btbtla/%s", resourceID)
 	rssWithCache(w, r, "bt_rss_v5_"+resourceID, "lock_", resourceID, ScrapeBtMovie, baseURL)
 }
 

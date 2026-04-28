@@ -88,8 +88,7 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string) (*sha
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			// tdown 页面用更短的超时，不需要重试太多次
-			downResp, err := shared.HTTPGetWithRetry(reqCtx, ctx.Client, baseURL+downPath, ctx.UserAgents, 1, ctx.RetryInterval)
+			downResp, err := shared.HTTPGetWithRetry(reqCtx, ctx.Client, baseURL+downPath, ctx.UserAgents, ctx.RetryMax, ctx.RetryInterval)
 			if downResp == nil || err != nil {
 				mu.Lock()
 				failCount++

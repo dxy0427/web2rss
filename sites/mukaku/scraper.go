@@ -6,20 +6,74 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strconv"
 	"time"
 
 	"web2rss/shared"
 )
 
+var idCodeRegex = shared.IDRegex
+
+// searchByName 通过名称搜索，返回第一个结果的 idcode
+func searchByName(ctx *shared.SiteContext, reqCtx context.Context, name string) (string, error) {
+	searchURL := fmt.Sprintf("%s/getVideoList?sb=%s&page=1&limit=5&app_id=%s&identity=%s",
+		baseURL+"/prod/api/v1", url.QueryEscape(name), appID, identity)
+
+	log.Printf("[mukaku] 搜索：%s", searchURL)
+	resp, err := shared.HTTPGetWithRetry(reqCtx, ctx.Client, searchURL, ctx.UserAgents, ctx.RetryMax, ctx.RetryInterval)
+	if err != nil {
+		return "", fmt.Errorf("搜索请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取搜索结果失败: %w", err)
+	}
+
+	var searchResp SearchResponse
+	if err := json.Unmarshal(bodyBytes, &searchResp); err != nil {
+		return "", fmt.Errorf("解析搜索结果失败: %w", err)
+	}
+
+	if !searchResp.Success || searchResp.Data == nil || len(searchResp.Data.Data) == 0 {
+		return "", fmt.Errorf("未找到: %s", name)
+	}
+
+	result := searchResp.Data.Data[0]
+	log.Printf("[mukaku] 搜索到: %s (idcode=%s, doub_id=%d)", result.Title, result.IDCode, result.DoubID)
+
+	// 优先用 idcode，其次用 doub_id
+	if result.IDCode != "" {
+		return result.IDCode, nil
+	}
+	if result.DoubID > 0 {
+		return strconv.Itoa(result.DoubID), nil
+	}
+	return "", fmt.Errorf("搜索结果无有效 ID")
+}
+
 // Scrape 抓取 web5.mukaku.com 影视资源
-func Scrape(ctx *shared.SiteContext, reqCtx context.Context, idCode string) (*shared.PageInfo, error) {
+// param 可以是 idcode (纯数字) 或名称 (中文/英文)
+func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string) (*shared.PageInfo, error) {
+	// 判断是 ID 还是名称
+	idCode := param
+	if !idCodeRegex.MatchString(param) {
+		// 名称搜索
+		found, err := searchByName(ctx, reqCtx, param)
+		if err != nil {
+			return nil, err
+		}
+		idCode = found
+	}
+
 	apiURL := fmt.Sprintf("%s?id=%s&app_id=%s&identity=%s", detailAPI, idCode, appID, identity)
 
-	log.Printf("[mukaku] 请求 API：%s", apiURL)
+	log.Printf("[mukaku] 请求详情 API：%s", apiURL)
 	resp, err := shared.HTTPGetWithRetry(reqCtx, ctx.Client, apiURL, ctx.UserAgents, ctx.RetryMax, ctx.RetryInterval)
 	if err != nil {
-		return nil, fmt.Errorf("请求 API 失败: %w", err)
+		return nil, fmt.Errorf("请求详情 API 失败: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -28,7 +82,7 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, idCode string) (*sh
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}
 
-	var apiResp ApiResponse
+	var apiResp DetailResponse
 	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
 		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
 	}

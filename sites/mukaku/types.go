@@ -1,11 +1,35 @@
 package mukaku
 
-// API 响应结构
+// API 通用响应
 type ApiResponse struct {
 	Code    int    `json:"code"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
-	Data    *Movie `json:"data"`
+}
+
+// 影视详情响应
+type DetailResponse struct {
+	ApiResponse
+	Data *Movie `json:"data"`
+}
+
+// 搜索响应
+type SearchResponse struct {
+	ApiResponse
+	Data *SearchData `json:"data"`
+}
+
+type SearchData struct {
+	Total int            `json:"total"`
+	Data  []SearchResult `json:"data"`
+}
+
+type SearchResult struct {
+	ID       int    `json:"id"`
+	IDCode   string `json:"idcode"`
+	Title    string `json:"title"`
+	Years    string `json:"years"`
+	DoubID   int    `json:"doub_id"`
 }
 
 type Movie struct {

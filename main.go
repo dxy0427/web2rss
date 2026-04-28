@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -125,6 +127,14 @@ const (
 	detailURL = baseURL + "/detail/%s.html"
 )
 
+// Mukaku (web5.mukaku.com) 配置
+const (
+	mukakuBaseURL  = "https://web5.mukaku.com"
+	mukakuDetailAPI = mukakuBaseURL + "/prod/api/v1/getVideoDetail"
+	mukakuAppID    = "83768d9ad4"
+	mukakuIdentity = "23734adac0301bccdcb107c4aa21f96c"
+)
+
 const (
 	resTypeFull   = 0
 	resTypeRange  = 1
@@ -151,6 +161,38 @@ type ResourceInfo struct {
 	titleRaw      string
 	SeedTime      time.Time
 	DetailPath    string
+}
+
+// Mukaku API 响应结构
+type MukakuResponse struct {
+	Code    int            `json:"code"`
+	Success bool           `json:"success"`
+	Message string         `json:"message"`
+	Data    *MukakuMovie   `json:"data"`
+}
+
+type MukakuMovie struct {
+	ID       int                          `json:"id"`
+	IDCode   string                       `json:"idcode"`
+	Title    string                       `json:"title"`
+	Image    string                       `json:"image"`
+	Years    string                       `json:"years"`
+	Alias    string                       `json:"alias"`
+	Abstract string                       `json:"abstract"`
+	Ecca     map[string][]MukakuSeed      `json:"ecca"`
+	Arrare   []string                     `json:"arrare"`
+}
+
+type MukakuSeed struct {
+	ID             int    `json:"id"`
+	ZName          string `json:"zname"`
+	ZSize          string `json:"zsize"`
+	ZLink          string `json:"zlink"`
+	Down           string `json:"down"`
+	ZQXD           string `json:"zqxd"`
+	EZT            string `json:"ezt"`
+	DefinitionGroup string `json:"definition_group"`
+	New            int    `json:"new"`
 }
 
 func searchNameToDetailPath(name string) string {
@@ -325,6 +367,84 @@ func ScrapeBtMovie(ctx context.Context, param string) (*PageInfo, error) {
 	return pageInfo, nil
 }
 
+func ScrapeMukaku(ctx context.Context, idCode string) (*PageInfo, error) {
+	apiURL := fmt.Sprintf("%s?id=%s&app_id=%s&identity=%s",
+		mukakuDetailAPI, idCode, mukakuAppID, mukakuIdentity)
+
+	log.Printf("请求 Mukaku API：%s", apiURL)
+	resp, err := httpGetWithRetry(ctx, apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Mukaku API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	var apiResp MukakuResponse
+	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
+		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
+	}
+
+	if !apiResp.Success || apiResp.Data == nil {
+		return nil, fmt.Errorf("API 返回失败: %s (code=%d)", apiResp.Message, apiResp.Code)
+	}
+
+	movie := apiResp.Data
+	pageInfo := &PageInfo{
+		Title:     movie.Title,
+		DetailURL: fmt.Sprintf("%s/mv/%s", mukakuBaseURL, idCode),
+	}
+
+	log.Printf("解析标题：%s, 分类数: %d", movie.Title, len(movie.Arrare))
+
+	for _, seeds := range movie.Ecca {
+		for _, seed := range seeds {
+			seedTime := time.Now()
+			if seed.EZT != "" {
+				if t, err := time.ParseInLocation("2006-01-02", seed.EZT, cstZone); err == nil {
+					seedTime = t
+				}
+			}
+
+			rType, fullEp, rStart, singleEp := extractResourceType(seed.ZName)
+			rEnd := 0
+			if rType == resTypeRange {
+				matches := episodeRangeRegex.FindStringSubmatch(seed.ZName)
+				if len(matches) >= 3 {
+					rEnd, _ = strconv.Atoi(matches[2])
+				}
+			}
+
+			magnet := seed.ZLink
+			if magnet == "" && seed.Down != "" {
+				// 如果没有直接的 magnet，尝试用下载链接
+				magnet = mukakuBaseURL + seed.Down
+			}
+
+			pageInfo.Resources = append(pageInfo.Resources, ResourceInfo{
+				ResourceTitle: seed.ZName,
+				Magnet:        magnet,
+				Size:          seed.ZSize,
+				Bytes:         parseSizeToBytes(seed.ZSize),
+				resType:       rType,
+				fullEpCount:   fullEp,
+				rangeStart:    rStart,
+				rangeEnd:      rEnd,
+				singleEp:      singleEp,
+				titleRaw:      seed.ZName,
+				SeedTime:      seedTime,
+				DetailPath:    fmt.Sprintf("/tr/%d.html", seed.ID),
+			})
+		}
+	}
+
+	pageInfo.Resources = sortResources(pageInfo.Resources)
+	return pageInfo, nil
+}
+
 func rssHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 60)
@@ -398,6 +518,79 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("响应完成，耗时：%s", time.Since(start))
 }
 
+func mukakuRssHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	timeoutSec := getEnvInt("SCRAPE_TIMEOUT_SEC", 60)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	resourceID := mux.Vars(r)["resource_id"]
+	log.Printf("收到请求：/rss/mukaku/%s", resourceID)
+	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+	cacheKey := "mukaku_rss_v1_" + resourceID
+
+	var rss []byte
+	var found bool
+	if rss, found = c.Get(cacheKey).([]byte); found {
+		w.Write(rss)
+		log.Printf("响应完成（缓存），耗时：%s", time.Since(start))
+		return
+	}
+
+	lockKey := "mukaku_lock_" + resourceID
+	lockVal, _ := cacheLock.LoadOrStore(lockKey, &sync.Mutex{})
+	lock := lockVal.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if rss, found = c.Get(cacheKey).([]byte); found {
+		w.Write(rss)
+		log.Printf("响应完成（缓存），耗时：%s", time.Since(start))
+		return
+	}
+
+	pageInfo, err := ScrapeMukaku(ctx, resourceID)
+	if pageInfo == nil {
+		pageInfo = &PageInfo{Title: "未知资源"}
+	}
+
+	feed := &feeds.Feed{
+		Title:       pageInfo.Title,
+		Link:        &feeds.Link{Href: pageInfo.DetailURL},
+		Description: pageInfo.Title,
+		Created:     time.Now(),
+	}
+
+	if err != nil {
+		feed.Items = append(feed.Items, &feeds.Item{
+			Title:       "抓取失败",
+			Description: err.Error(),
+			Created:     time.Now(),
+		})
+	} else {
+		for _, res := range pageInfo.Resources {
+			item := &feeds.Item{
+				Title:       res.titleRaw,
+				Link:        &feeds.Link{Href: mukakuBaseURL + res.DetailPath},
+				Description: fmt.Sprintf("%s [%s]", res.titleRaw, res.Size),
+				Created:     res.SeedTime,
+				Enclosure: &feeds.Enclosure{
+					Url:    res.Magnet,
+					Type:   "application/x-bittorrent",
+					Length: strconv.FormatInt(res.Bytes, 10),
+				},
+			}
+			feed.Items = append(feed.Items, item)
+		}
+	}
+
+	rssStr, _ := feed.ToRss()
+	rssBytes := []byte(rssStr)
+	c.Set(cacheKey, rssBytes, time.Duration(getEnvInt("CACHE_EXPIRATION_MINUTES", 15))*time.Minute)
+	w.Write(rssBytes)
+	log.Printf("响应完成，耗时：%s", time.Since(start))
+}
+
 func main() {
 	initHttpClient()
 	exp := time.Duration(getEnvInt("CACHE_EXPIRATION_MINUTES", 15)) * time.Minute
@@ -405,7 +598,11 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/rss/btmovie/{resource_id}", rssHandler)
+	r.HandleFunc("/rss/mukaku/{resource_id}", mukakuRssHandler)
 
 	port := getEnvStr("PORT", "8888")
+	log.Printf("web2rss 启动，端口：%s", port)
+	log.Printf("btbtla 路由: /rss/btmovie/{resource_id}")
+	log.Printf("mukaku 路由: /rss/mukaku/{idcode}")
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -48,7 +48,17 @@ func HandleRSS(w http.ResponseWriter, r *http.Request, ctx *SiteContext,
 	}
 
 	rssBytes := buildFeed(pageInfo, err, siteBaseURL)
-	ctx.Cache.Set(cacheKey, rssBytes, ctx.CacheExpiration)
+	// 抓取出错时只做短缓存，避免源站恢复后仍长时间返回旧的错误结果。
+	if err != nil {
+		shortTTL := 30 * time.Second
+		if ctx.CacheExpiration < shortTTL {
+			shortTTL = ctx.CacheExpiration
+		}
+		ctx.Cache.Set(cacheKey, rssBytes, shortTTL)
+		log.Printf("抓取失败，短缓存 %s：%v", shortTTL, err)
+	} else {
+		ctx.Cache.Set(cacheKey, rssBytes, ctx.CacheExpiration)
+	}
 	w.Write(rssBytes)
 	log.Printf("响应完成，耗时：%s", time.Since(start))
 }

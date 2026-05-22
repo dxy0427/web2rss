@@ -103,8 +103,20 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string) (*sha
 			sizeStr := shared.CleanString(downDoc.Find(".video-info-items:contains('影片大小') .video-info-item").Text())
 			timeText := shared.CleanString(downDoc.Find(".video-info-items:contains('种子时间') .video-info-item").Text())
 			seedTime := time.Now()
-			if t, err := time.ParseInLocation(shared.TimeLayout, timeText, ctx.CSTZone); err == nil {
+			// 实际格式形如 "2026-05-19 20:30:40 +0800 CST"；先尝试带时区的完整 layout，
+			// 失败再退回到裁剪时区后缀的旧 layout，最后才 fallback 到 time.Now()。
+			if t, err := time.Parse("2006-01-02 15:04:05 -0700 MST", timeText); err == nil {
 				seedTime = t
+			} else {
+				trimmed := timeText
+				if i := strings.Index(trimmed, " +"); i > 0 {
+					trimmed = trimmed[:i]
+				} else if i := strings.Index(trimmed, " -"); i > 0 {
+					trimmed = trimmed[:i]
+				}
+				if t, err := time.ParseInLocation(shared.TimeLayout, trimmed, ctx.CSTZone); err == nil {
+					seedTime = t
+				}
 			}
 
 			mu.Lock()

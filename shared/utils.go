@@ -9,7 +9,7 @@ import (
 
 var (
 	IDRegex           = regexp.MustCompile(`^\d+$`)
-	SizeExtractRegex  = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([GMK]B)`)
+	SizeExtractRegex  = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([TGMK]B)`)
 	WhitespaceRegex   = regexp.MustCompile(`[\s\t\n\r]+`)
 	EpisodeFullRegex  = regexp.MustCompile(`\[\s*全(\d+)集\s*\]`)
 	EpisodeRangeRegex = regexp.MustCompile(`\[\s*第(\d+)\s*-\s*(\d+)\s*集\s*\]`)

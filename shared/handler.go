@@ -16,7 +16,7 @@ func HandleRSS(w http.ResponseWriter, r *http.Request, ctx *SiteContext,
 	cacheKeyPrefix, resourceID string, scraper ScraperFunc, siteBaseURL string) {
 
 	start := time.Now()
-	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 
 	cacheKey := cacheKeyPrefix + resourceID
 

@@ -22,6 +22,7 @@ func main() {
 	retryMax := getEnvInt("RETRY_MAX", 2)
 	retryInterval := time.Duration(getEnvInt("RETRY_INTERVAL_SEC", 1)) * time.Second
 	maxConcurrency := getEnvInt("MAX_CONCURRENCY", math.MaxInt32)
+	scrapeTimeout := time.Duration(getEnvInt("SCRAPE_TIMEOUT_SEC", 20)) * time.Second
 
 	cstZone, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -29,11 +30,13 @@ func main() {
 	}
 
 	client := &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout: scrapeTimeout,
 		Transport: &http.Transport{
-			MaxIdleConns:       10,
-			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: false,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 16,
+			MaxConnsPerHost:     32,
+			IdleConnTimeout:     30 * time.Second,
+			DisableCompression:  false,
 		},
 	}
 

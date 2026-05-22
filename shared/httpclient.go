@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// HTTPGetWithRetry 带重试的 HTTP GET 请求
+// HTTPGetWithRetry 带重试的 HTTP GET 请求。
+// 仅对网络错误和 5xx 重试；4xx（404/403/...）是客户端错误，重试也是徒劳，立刻放弃。
 func HTTPGetWithRetry(ctx context.Context, client *http.Client, url string,
 	userAgents []string, retryMax int, retryInterval time.Duration) (*http.Response, error) {
 
@@ -27,6 +28,14 @@ func HTTPGetWithRetry(ctx context.Context, client *http.Client, url string,
 		if err == nil && resp.StatusCode == http.StatusOK {
 			return resp, nil
 		}
+
+		// 4xx：客户端错误，立即放弃
+		if err == nil && resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			status := resp.StatusCode
+			resp.Body.Close()
+			return nil, fmt.Errorf("HTTP %d: %s", status, url)
+		}
+
 		if resp != nil {
 			resp.Body.Close()
 		}

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"web2rss/shared"
+	onelou "web2rss/sites/1lou"
+	sixv123 "web2rss/sites/6v123"
 	"web2rss/sites/btbtla"
 	"web2rss/sites/mukaku"
 
@@ -51,26 +53,31 @@ func main() {
 
 	// 构建共享上下文
 	ctx := &shared.SiteContext{
-		Client:         client,
-		Cache:          c,
-		CacheLock:      &sync.Map{},
+		Client:          client,
+		Cache:           c,
+		CacheLock:       &sync.Map{},
 		CacheExpiration: exp,
-		UserAgents:     userAgents,
-		RetryMax:       retryMax,
-		RetryInterval:  retryInterval,
-		MaxConcurrency: maxConcurrency,
-		CSTZone:        cstZone,
+		UserAgents:      userAgents,
+		RetryMax:        retryMax,
+		RetryInterval:   retryInterval,
+		MaxConcurrency:  maxConcurrency,
+		CSTZone:         cstZone,
+		AccessToken:     getEnvStr("MUKAKU_ACCESS_TOKEN", ""),
 	}
 
 	// 注册路由
 	r := mux.NewRouter()
 	btbtla.RegisterRoutes(r, ctx)
 	mukaku.RegisterRoutes(r, ctx)
+	onelou.RegisterRoutes(r, ctx)
+	sixv123.RegisterRoutes(r, ctx)
 
 	port := getEnvStr("PORT", "8888")
 	log.Printf("web2rss 启动，端口：%s", port)
 	log.Printf("  btbtla 路由: /rss/btbtla/{resource_id}")
 	log.Printf("  mukaku 路由: /rss/mukaku/{idcode}")
+	log.Printf("  1lou 路由: /rss/1lou/{关键词或帖子ID}?limit=N")
+	log.Printf("  6v123 路由: /rss/6v123/{分类如donghuapian,dianshiju或search/关键词,detail/影片页路径}?limit=N")
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 

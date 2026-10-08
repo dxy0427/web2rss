@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -8,13 +9,13 @@ import (
 )
 
 var (
-	IDRegex           = regexp.MustCompile(`^\d+$`)
-	SizeExtractRegex  = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([TGMK]B)`)
-	WhitespaceRegex   = regexp.MustCompile(`[\s\t\n\r]+`)
-	EpisodeFullRegex  = regexp.MustCompile(`\[\s*全(\d+)集\s*\]`)
-	EpisodeRangeRegex = regexp.MustCompile(`\[\s*第(\d+)\s*-\s*(\d+)\s*集\s*\]`)
+	IDRegex            = regexp.MustCompile(`^\d+$`)
+	SizeExtractRegex   = regexp.MustCompile(`(?i)(\d+(\.\d+)?)\s*([TGMK]B)`)
+	WhitespaceRegex    = regexp.MustCompile(`[\s\t\n\r]+`)
+	EpisodeFullRegex   = regexp.MustCompile(`\[\s*全(\d+)集\s*\]`)
+	EpisodeRangeRegex  = regexp.MustCompile(`\[\s*第(\d+)\s*-\s*(\d+)\s*集\s*\]`)
 	EpisodeSingleRegex = regexp.MustCompile(`\[\s*第(\d+)\s*集\s*\]`)
-	TimeLayout        = "2006-01-02 15:04:05"
+	TimeLayout         = "2006-01-02 15:04:05"
 )
 
 func CleanString(str string) string {
@@ -39,6 +40,23 @@ func ParseSizeToBytes(sizeStr string) int64 {
 		return int64(val * 1024)
 	}
 	return 0
+}
+
+// FormatBytes 字节数转可读大小，如 2881938518 -> "2.68GB"
+func FormatBytes(bytes int64) string {
+	const unit = 1024.0
+	f := float64(bytes)
+	switch {
+	case f >= unit*unit*unit*unit:
+		return fmt.Sprintf("%.2fTB", f/(unit*unit*unit*unit))
+	case f >= unit*unit*unit:
+		return fmt.Sprintf("%.2fGB", f/(unit*unit*unit))
+	case f >= unit*unit:
+		return fmt.Sprintf("%.2fMB", f/(unit*unit))
+	case f >= unit:
+		return fmt.Sprintf("%.2fKB", f/unit)
+	}
+	return fmt.Sprintf("%dB", bytes)
 }
 
 func ExtractResourceType(title string) (int, int, int, int) {

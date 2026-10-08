@@ -21,13 +21,15 @@ type ResourceInfo struct {
 	ResourceTitle string
 	Magnet        string
 	Size          string
-	Bytes         int64
-	ResType       int
-	FullEpCount   int
-	RangeStart    int
-	RangeEnd      int
-	SingleEp      int
-	TitleRaw      string
-	SeedTime      time.Time
-	DetailPath    string
+	// Description 可选的富文本描述（HTML），为空时 feed 使用 "标题 [大小]"
+	Description string
+	Bytes       int64
+	ResType     int
+	FullEpCount int
+	RangeStart  int
+	RangeEnd    int
+	SingleEp    int
+	TitleRaw    string
+	SeedTime    time.Time
+	DetailPath  string
 }

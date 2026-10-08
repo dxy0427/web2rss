@@ -79,10 +79,16 @@ func buildFeed(pageInfo *PageInfo, err error, siteBaseURL string) []byte {
 		})
 	} else {
 		for _, res := range pageInfo.Resources {
+			description := res.TitleRaw
+			if res.Description != "" {
+				description = res.Description
+			} else if res.Size != "" {
+				description = fmt.Sprintf("%s [%s]", res.TitleRaw, res.Size)
+			}
 			feed.Items = append(feed.Items, &feeds.Item{
 				Title:       res.TitleRaw,
 				Link:        &feeds.Link{Href: siteBaseURL + res.DetailPath},
-				Description: fmt.Sprintf("%s [%s]", res.TitleRaw, res.Size),
+				Description: description,
 				Created:     res.SeedTime,
 				Enclosure: &feeds.Enclosure{
 					Url:    res.Magnet,

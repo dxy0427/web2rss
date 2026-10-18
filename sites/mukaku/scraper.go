@@ -71,10 +71,13 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string, eps i
 
 	// 详情接口的种子列表（ecca）已 VIP 化：携带令牌时返回完整种子，
 	// 游客恒为空，需回退到公开种子流扫描
-	apiResp, err := fetchDetail(ctx, reqCtx, idCode, ctx.AccessToken != "")
-	if err != nil && ctx.AccessToken != "" {
+	useToken := ctx.AccessToken != "" && !tokenSuspended()
+	apiResp, err := fetchDetail(ctx, reqCtx, idCode, useToken)
+	if err != nil && useToken {
 		// 令牌失效或被拒时不中断服务：去掉令牌按游客再试一次
-		log.Printf("[mukaku] 带令牌请求详情失败（%v），改按游客模式重试", err)
+		window := suspendToken()
+		log.Printf("[mukaku] 带令牌请求详情失败（%v），%d 分钟内改按游客模式，到期自动重试",
+			err, int(window.Minutes()))
 		apiResp, err = fetchDetail(ctx, reqCtx, idCode, false)
 	}
 	if err != nil {

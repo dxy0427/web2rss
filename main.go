@@ -69,6 +69,8 @@ func main() {
 
 	// mukaku 令牌检查（异步执行，不拖慢启动）：配置了则校验并输出 VIP 状态
 	go mukaku.StartupCheck(ctx)
+	// 后台巡查令牌有效期，临近过期时提醒更换
+	go mukaku.WatchToken(ctx)
 
 	// 注册路由
 	r := mux.NewRouter()

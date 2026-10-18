@@ -364,8 +364,8 @@ func remainDays(d time.Duration) int {
 	return days
 }
 
-// expiryWarnWindow 临近到期开始提醒的窗口
-const expiryWarnWindow = 7 * 24 * time.Hour
+// expiryWarnWindow 临近到期开始提醒的窗口（站点令牌约 7 天有效，提前 2 天提醒即可）
+const expiryWarnWindow = 48 * time.Hour
 
 // WatchToken 后台例行检查令牌有效期：临近过期时提醒续期，避免会员通道静默掉线
 func WatchToken(ctx *shared.SiteContext) {

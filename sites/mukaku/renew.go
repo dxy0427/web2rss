@@ -97,6 +97,8 @@ func handleRenewSubmit(ctx *shared.SiteContext, w http.ResponseWriter, req *http
 	}
 
 	adoptToken(token)
+	// 清空 feed 缓存，避免新令牌生效前的旧结果（多为游客版）继续返回
+	ctx.Cache.Flush()
 
 	// 登录成功后顺带确认账号与 VIP 状态
 	user, uerr := fetchUserInfo(ctx)
@@ -142,7 +144,7 @@ func renewPage(status, noticeHTML, bodyHTML string) string {
   .ok{background:#1b3a2a;color:#7ee2a8}
   .err{background:#3a1b1b;color:#f28b82}
   form{display:flex;flex-direction:column;gap:12px}
-  img{cursor:pointer;border-radius:8px;background:#fff;width:100%;max-width:250px;height:auto}
+  img{cursor:pointer;border-radius:8px;background:#fff;width:100%%;max-width:250px;height:auto}
   input{height:42px;border-radius:8px;border:1px solid #3c4043;background:#14161a;color:#e8eaed;
         padding:0 12px;font-size:15px;outline:none}
   input:focus{border-color:#8ab4f8}

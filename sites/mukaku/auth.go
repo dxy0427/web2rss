@@ -220,7 +220,9 @@ func fetchCaptcha(ctx *shared.SiteContext) (string, string, error) {
 	defer cancel()
 
 	apiURL := fmt.Sprintf("%s/getCaptcha?app_id=%s&identity=%s", baseURL+"/prod/api/v1", appID, identity)
-	resp, err := shared.HTTPGetWithHeaders(reqCtx, ctx.Client, apiURL, ctx.UserAgents, 0, ctx.RetryInterval, nil)
+	// retryMax=2：验证码接口偶发抖动时自动重试，避免用户看到“获取失败”
+	resp, err := shared.HTTPGetWithHeaders(reqCtx, ctx.Client, apiURL, ctx.UserAgents, 2, ctx.RetryInterval,
+		map[string]string{"Accept-Language": "zh_CN"})
 	if err != nil {
 		return "", "", fmt.Errorf("请求失败: %w", err)
 	}

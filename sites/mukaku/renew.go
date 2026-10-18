@@ -19,10 +19,12 @@ import (
 func RegisterRenewRoutes(r *mux.Router, ctx *shared.SiteContext) {
 	r.HandleFunc("/mukaku/renew", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		if req.Method == http.MethodPost {
 			handleRenewSubmit(ctx, w, req)
 			return
 		}
+		log.Printf("[mukaku] 续期页已打开")
 		renderRenewForm(ctx, w, "", "")
 	}).Methods(http.MethodGet, http.MethodPost)
 }
@@ -52,6 +54,7 @@ func renderRenewForm(ctx *shared.SiteContext, w http.ResponseWriter, notice, not
 	} else {
 		img, key, err := fetchCaptcha(ctx)
 		if err != nil {
+			log.Printf("[mukaku] 续期页拉取验证码失败：%v", err)
 			notice, noticeClass = "验证码获取失败："+err.Error()+"，请刷新重试", "err"
 		} else {
 			form = fmt.Sprintf(`<form method="post" action="/mukaku/renew">
@@ -139,7 +142,7 @@ func renewPage(status, noticeHTML, bodyHTML string) string {
   .ok{background:#1b3a2a;color:#7ee2a8}
   .err{background:#3a1b1b;color:#f28b82}
   form{display:flex;flex-direction:column;gap:12px}
-  img{cursor:pointer;border-radius:8px;background:#fff;width:130px;height:44px;object-fit:cover}
+  img{cursor:pointer;border-radius:8px;background:#fff;width:100%;max-width:250px;height:auto}
   input{height:42px;border-radius:8px;border:1px solid #3c4043;background:#14161a;color:#e8eaed;
         padding:0 12px;font-size:15px;outline:none}
   input:focus{border-color:#8ab4f8}

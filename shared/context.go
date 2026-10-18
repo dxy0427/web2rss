@@ -22,6 +22,9 @@ type SiteContext struct {
 	CSTZone         *time.Location
 	// AccessToken 可选的站点访问令牌（如 mukaku 的 VIP access_token），为空则不带
 	AccessToken string
+	// Username / Password 站点账号（可选，供 mukaku 一键续期页自动登录）
+	Username string
+	Password string
 }
 
 // ScraperFunc 爬虫函数签名：接收请求 context 和资源 ID

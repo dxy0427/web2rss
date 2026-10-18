@@ -65,8 +65,12 @@ func main() {
 		CSTZone:         cstZone,
 		// 令牌从环境变量读取，去掉复制时可能带入的首尾空白
 		AccessToken: strings.TrimSpace(getEnvStr("MUKAKU_ACCESS_TOKEN", "")),
+		Username:    strings.TrimSpace(getEnvStr("MUKAKU_USERNAME", "")),
+		Password:    getEnvStr("MUKAKU_PASSWORD", ""),
 	}
 
+	// 载入持久化令牌（页面续期的结果），随后异步校验令牌并巡查有效期
+	mukaku.InitToken(ctx)
 	// mukaku 令牌检查（异步执行，不拖慢启动）：配置了则校验并输出 VIP 状态
 	go mukaku.StartupCheck(ctx)
 	// 后台巡查令牌有效期，临近过期时提醒更换
@@ -83,6 +87,7 @@ func main() {
 	log.Printf("web2rss 启动，端口：%s", port)
 	log.Printf("  btbtla 路由: /rss/btbtla/{resource_id}")
 	log.Printf("  mukaku 路由: /rss/mukaku/{idcode}")
+	log.Printf("  mukaku 续期: /mukaku/renew（配置 MUKAKU_USERNAME / MUKAKU_PASSWORD 后可用）")
 	log.Printf("  1lou 路由: /rss/1lou/{关键词或帖子ID}?limit=N")
 	log.Printf("  6v123 路由: /rss/6v123/{分类如donghuapian,dianshiju或search/关键词,detail/影片页路径}?limit=N")
 	log.Fatal(http.ListenAndServe(":"+port, r))

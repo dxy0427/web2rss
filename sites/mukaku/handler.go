@@ -38,4 +38,7 @@ func RegisterRoutes(r *mux.Router, ctx *shared.SiteContext) {
 		}
 		shared.HandleRSS(w, req, ctx, cacheKeyPrefix, resourceID, scraper, baseURL)
 	})
+
+	// 令牌一键续期页（配置 MUKAKU_USERNAME / MUKAKU_PASSWORD 后可用）
+	RegisterRenewRoutes(r, ctx)
 }

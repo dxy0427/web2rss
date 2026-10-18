@@ -19,7 +19,7 @@ docker run -d \
   ghcr.io/dxy0427/web2rss:latest
 ```
 
-有 mukaku VIP 账号时追加一行：`-e MUKAKU_ACCESS_TOKEN=你的token`（获取方式见下文《mukaku 会员令牌》）
+有 mukaku VIP 账号时追加：`-e MUKAKU_USERNAME=账号 -e MUKAKU_PASSWORD=密码`（可用一键续期，见下文《mukaku 会员令牌》）；或直接给令牌 `-e MUKAKU_ACCESS_TOKEN=你的token`
 
 源码运行：
 
@@ -62,18 +62,26 @@ go build -o web2rss . && PORT=8888 ./web2rss
 
 ## mukaku 会员令牌
 
-配置 `MUKAKU_ACCESS_TOKEN` 后可直接读取完整种子列表（全部历史集数），并在启动时自动校验收费状态。获取步骤：
+配置后可直接读取完整种子列表（全部历史集数），并在启动时自动校验会员状态。两种方式：
+
+**方式一：账号密码 + 一键续期（推荐）**
+
+1. 启动容器时添加 `-e MUKAKU_USERNAME=账号 -e MUKAKU_PASSWORD=密码`；建议同时加 `-v web2rss-data:/data`（持久保存续期结果，容器重建也不丢）
+2. 令牌缺失或过期时，浏览器打开 `http://服务地址:8888/mukaku/renew`
+3. 按提示输入图中验证码，点“一键续期”即可自动登录换新令牌，立即生效、无需重启
+
+**方式二：手动粘贴令牌**
 
 1. 浏览器登录 https://web5.mukaku.com
 2. 按 F12 → Application（应用）→ Storage → Local Storage → 选中 https://web5.mukaku.com
 3. 找到键 `token`，复制它的值（三段式 JWT 字符串）
-4. 启动容器时加环境变量 `-e MUKAKU_ACCESS_TOKEN=复制的值`（已在运行的容器需删除后用新参数重建）
+4. 启动容器时加 `-e MUKAKU_ACCESS_TOKEN=复制的值`（已在运行的容器需删除后用新参数重建）
 5. 确认生效：`docker logs web2rss` 启动日志应出现 `[mukaku] 令牌有效期至 2026-xx-xx（剩余 N 天）` 和 `[mukaku] access_token 校验成功：账号 xxx，VIP：是（到期 ...）`
 
 说明：
 
-- 站点登录带图形验证码（服务端强制校验），无法账号密码自动登录；浏览器登录后取一次令牌即可
-- 令牌是 JWT、**自带有过期时间**：启动时会解析并打印有效期；到期后重新登录复制新 token、删除容器重建即可
+- 站点登录带图形验证码（服务端强制校验），**无法完全自动续期**；一键续期页是验证码机制下最省事的方式
+- 令牌是 JWT、自带有过期时间：启动时会解析并打印有效期；剩 7 天内日志会定期提醒续期
 - 令牌无效或过期时服务不会中断：自动按游客模式抓取；令牌被拒后 1 小时内不再重复尝试，过后自动重试
 - 配置令牌后长篇剧集会返回全部历史集数，ani-rss 订阅建议开启“只下载最新集”
 
@@ -88,6 +96,8 @@ go build -o web2rss . && PORT=8888 ./web2rss
 | `RETRY_INTERVAL_SEC` | `1` | 重试间隔基数 |
 | `MAX_CONCURRENCY` | 不限 | 并发抓取上限（内部另有更小上限） |
 | `MUKAKU_ACCESS_TOKEN` | 空 | mukaku 会员令牌（JWT），配置后返回完整种子并自动校验，获取方式见《mukaku 会员令牌》 |
+| `MUKAKU_USERNAME` | 空 | mukaku 账号（可选，配合一键续期页使用） |
+| `MUKAKU_PASSWORD` | 空 | mukaku 密码（可选，配合一键续期页使用） |
 
 ## 注意
 

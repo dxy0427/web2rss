@@ -8,18 +8,24 @@ Docker（推荐）：
 
 ```bash
 docker run -d \
-  --network app \
-  -p 127.0.0.1:8888:8888 \
+  --name web2rss \
+  --restart=unless-stopped \
+  -p 8888:8888 \
+  -v web2rss-data:/data \
   --memory 1g \
   --cpus 1 \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
-  --name web2rss \
-  --restart=unless-stopped \
   ghcr.io/dxy0427/web2rss:latest
 ```
 
+- 局域网直接访问用 `-p 8888:8888`；只给本机或反向代理访问时改成 `-p 127.0.0.1:8888:8888`
+- 镜像仅提供 `linux/amd64`，ARM 设备（如部分群晖）需自行 `docker build`
+- `-v web2rss-data:/data` 用于持久保存 mukaku 续期令牌，**建议保留**，否则重建容器后需重新续期
+
 有 mukaku VIP 账号时追加：`-e MUKAKU_USERNAME=账号 -e MUKAKU_PASSWORD=密码`（可用一键续期，见下文《mukaku 会员令牌》）；或直接给令牌 `-e MUKAKU_ACCESS_TOKEN=你的token`
+
+公网访问建议经反向代理（Caddy/Nginx/Cloudflare Tunnel）并配置鉴权，不要直接把 8888 暴露到公网；反代读超时建议不小于 180 秒（游客模式抓取较慢时避免截断）。
 
 源码运行：
 
@@ -81,7 +87,8 @@ go build -o web2rss . && PORT=8888 ./web2rss
 说明：
 
 - 站点登录带图形验证码（服务端强制校验），**无法完全自动续期**；一键续期页是验证码机制下最省事的方式
-- 令牌是 JWT、自带有过期时间：启动时会解析并打印有效期；剩 7 天内日志会定期提醒续期
+- 续期页本身不含登录凭据，但能触发用已配置账号登录；公网部署时建议连同整站一起加访问控制
+- 令牌是 JWT、自带有过期时间：启动时会解析并打印有效期；剩 2 天内日志会定期提醒续期
 - 令牌无效或过期时服务不会中断：自动按游客模式抓取；令牌被拒后 1 小时内不再重复尝试，过后自动重试
 - 配置令牌后长篇剧集会返回全部历史集数，ani-rss 订阅建议开启“只下载最新集”
 
@@ -101,6 +108,7 @@ go build -o web2rss . && PORT=8888 ./web2rss
 
 ## 注意
 
+- **凭据只放在运行环境**：账号密码、令牌均通过环境变量或 `/data` 传入，不要写进代码或提交到仓库；密码含 `$` 时 `docker run` 用单引号包裹，Compose 中写成 `$$`
 - 防封：mukaku 内置节流、并发限制和页面共享缓存，订阅 10~20 部没有压力；数量更多时优先调大 `CACHE_EXPIRATION_MINUTES`，并避免同时集中添加订阅。
 - 6v 影片页路径需取自 hao6v.org（旧版镜像的 ID 与路径不通用）。
 - 抓取失败只缓存 30 秒，源站恢复后自动重试；中断的残缺结果不会被长缓存。

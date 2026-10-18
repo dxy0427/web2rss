@@ -10,8 +10,9 @@ import (
 
 // doWithRetry 带重试的 HTTP 请求内部实现。
 // 仅对网络错误和 5xx 重试；4xx（404/403/...）是客户端错误，重试也是徒劳，立刻放弃。
+// headers 为附加请求头（如令牌授权），在默认头之后设置，可覆盖默认值。
 func doWithRetry(ctx context.Context, client *http.Client, method, url string, body []byte, contentType string,
-	userAgents []string, retryMax int, retryInterval time.Duration) (*http.Response, error) {
+	userAgents []string, retryMax int, retryInterval time.Duration, headers map[string]string) (*http.Response, error) {
 
 	var resp *http.Response
 	var err error
@@ -35,6 +36,9 @@ func doWithRetry(ctx context.Context, client *http.Client, method, url string, b
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
 
 		resp, err = client.Do(req)
@@ -70,12 +74,24 @@ func doWithRetry(ctx context.Context, client *http.Client, method, url string, b
 // 仅对网络错误和 5xx 重试；4xx（404/403/...）是客户端错误，重试也是徒劳，立刻放弃。
 func HTTPGetWithRetry(ctx context.Context, client *http.Client, url string,
 	userAgents []string, retryMax int, retryInterval time.Duration) (*http.Response, error) {
-	return doWithRetry(ctx, client, http.MethodGet, url, nil, "", userAgents, retryMax, retryInterval)
+	return doWithRetry(ctx, client, http.MethodGet, url, nil, "", userAgents, retryMax, retryInterval, nil)
+}
+
+// HTTPGetWithHeaders 同 HTTPGetWithRetry，额外携带自定义请求头（如令牌授权）
+func HTTPGetWithHeaders(ctx context.Context, client *http.Client, url string,
+	userAgents []string, retryMax int, retryInterval time.Duration, headers map[string]string) (*http.Response, error) {
+	return doWithRetry(ctx, client, http.MethodGet, url, nil, "", userAgents, retryMax, retryInterval, headers)
 }
 
 // HTTPPostWithRetry 带重试的 HTTP POST 请求（表单提交）。
 // 重试策略与 HTTPGetWithRetry 相同。
 func HTTPPostWithRetry(ctx context.Context, client *http.Client, url, contentType string, body []byte,
 	userAgents []string, retryMax int, retryInterval time.Duration) (*http.Response, error) {
-	return doWithRetry(ctx, client, http.MethodPost, url, body, contentType, userAgents, retryMax, retryInterval)
+	return doWithRetry(ctx, client, http.MethodPost, url, body, contentType, userAgents, retryMax, retryInterval, nil)
+}
+
+// HTTPPostWithHeaders 同 HTTPPostWithRetry，额外携带自定义请求头
+func HTTPPostWithHeaders(ctx context.Context, client *http.Client, url, contentType string, body []byte,
+	userAgents []string, retryMax int, retryInterval time.Duration, headers map[string]string) (*http.Response, error) {
+	return doWithRetry(ctx, client, http.MethodPost, url, body, contentType, userAgents, retryMax, retryInterval, headers)
 }

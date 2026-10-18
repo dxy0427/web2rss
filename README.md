@@ -19,7 +19,7 @@ docker run -d \
   ghcr.io/dxy0427/web2rss:latest
 ```
 
-有 mukaku VIP 账号时追加一行：`-e MUKAKU_ACCESS_TOKEN=你的token`
+有 mukaku VIP 账号时追加一行：`-e MUKAKU_ACCESS_TOKEN=你的token`（获取方式见下文《mukaku 会员令牌》）
 
 源码运行：
 
@@ -58,7 +58,23 @@ go build -o web2rss . && PORT=8888 ./web2rss
 - **1lou**：搜索返回各帖子种子包（一个种子可能含多集或全集）；enclosure 为站内 .torrent 直链，无种子时回退正文磁力。帖子页有限速，个别请求会挂起重试。
 - **6v123**：抓 hao6v.org（新版）。**片名订阅**（`/rss/6v123/遮天`）自动搜索取第一个结果；**ID 订阅**（`/rss/6v123/15719`）自动探测分类路径；两者均返回该页**全部磁力**。分类/搜索每个影片页最多取最新 20 条。英文片名若站点搜不到（标题多为中文），请用中文片名。常用分类：`donghuapian` 动画片、`dianshiju` 电视剧、`xijupian` 喜剧片、`dongzuopian` 动作片、`aiqingpian` 爱情片、`kehuanpian` 科幻片、`kongbupian` 恐怖片、`juqingpian` 剧情片、`zhanzhengpian` 战争片、`jilupian` 纪录片，子分类按 URL 填（如 `dianshiju/oumeiju`）。
 - **btbtla**：单片返回该影片页的资源（页面最新在前，最多 50 条）；磁力在各自的下载子页里，需逐条抓取，源站对请求速率敏感，已内置节流与小并发。
-- **mukaku**（不太灵影视）：源站种子已 VIP 化，通过公开种子流按影片匹配取回。剧集返回最近 `eps` 个集数（各清晰度版本）；电影返回最近一批。更早的历史种子需配置 `MUKAKU_ACCESS_TOKEN`（登录后取 Local Storage 的 token 值）。
+- **mukaku**（不太灵影视）：源站种子已 VIP 化。未配置令牌时按公开种子流匹配取回（剧集为最近 `eps` 个集数）；配置 `MUKAKU_ACCESS_TOKEN`（见下文《mukaku 会员令牌》）后直接返回完整种子列表；令牌失效时自动回退游客模式，不影响出 feed。
+
+## mukaku 会员令牌
+
+配置 `MUKAKU_ACCESS_TOKEN` 后可直接读取完整种子列表（全部历史集数），并在启动时自动校验收费状态。获取步骤：
+
+1. 浏览器登录 https://web5.mukaku.com
+2. 按 F12 → Application（应用）→ Storage → Local Storage → 选中 https://web5.mukaku.com
+3. 找到键 `token`，复制它的值（三段式 JWT 字符串）
+4. 启动容器时加环境变量 `-e MUKAKU_ACCESS_TOKEN=复制的值`（已在运行的容器需删除后用新参数重建）
+5. 确认生效：`docker logs web2rss` 启动日志应出现 `[mukaku] access_token 校验成功：账号 xxx，VIP：是（到期 ...）`
+
+说明：
+
+- 站点登录带图形验证码，无法账号密码自动登录；浏览器登录后取一次令牌即可
+- 令牌无效或过期时服务不会中断：自动按游客模式抓取，日志中会有相应提示
+- 配置令牌后长篇剧集会返回全部历史集数，ani-rss 订阅建议开启“只下载最新集”
 
 ## 环境变量
 
@@ -70,7 +86,7 @@ go build -o web2rss . && PORT=8888 ./web2rss
 | `RETRY_MAX` | `2` | 重试次数 |
 | `RETRY_INTERVAL_SEC` | `1` | 重试间隔基数 |
 | `MAX_CONCURRENCY` | 不限 | 并发抓取上限（内部另有更小上限） |
-| `MUKAKU_ACCESS_TOKEN` | 空 | mukaku VIP 登录令牌（可选） |
+| `MUKAKU_ACCESS_TOKEN` | 空 | mukaku 会员令牌（JWT），配置后返回完整种子并自动校验，获取方式见《mukaku 会员令牌》 |
 
 ## 注意
 

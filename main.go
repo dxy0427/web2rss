@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,8 +63,12 @@ func main() {
 		RetryInterval:   retryInterval,
 		MaxConcurrency:  maxConcurrency,
 		CSTZone:         cstZone,
-		AccessToken:     getEnvStr("MUKAKU_ACCESS_TOKEN", ""),
+		// 令牌从环境变量读取，去掉复制时可能带入的首尾空白
+		AccessToken: strings.TrimSpace(getEnvStr("MUKAKU_ACCESS_TOKEN", "")),
 	}
+
+	// mukaku 令牌检查（异步执行，不拖慢启动）：配置了则校验并输出 VIP 状态
+	go mukaku.StartupCheck(ctx)
 
 	// 注册路由
 	r := mux.NewRouter()

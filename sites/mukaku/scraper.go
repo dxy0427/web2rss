@@ -69,34 +69,16 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string, eps i
 		idCode = found
 	}
 
-	// 详情接口的种子列表（ecca）已 VIP 化，游客恒为空；
-	// 有 token 时走 ecca，否则回退到公开种子流扫描
-	token := ""
-	if ctx.AccessToken != "" {
-		token = "&access_token=" + url.QueryEscape(ctx.AccessToken)
+	// 详情接口的种子列表（ecca）已 VIP 化：携带令牌时返回完整种子，
+	// 游客恒为空，需回退到公开种子流扫描
+	apiResp, err := fetchDetail(ctx, reqCtx, idCode, ctx.AccessToken != "")
+	if err != nil && ctx.AccessToken != "" {
+		// 令牌失效或被拒时不中断服务：去掉令牌按游客再试一次
+		log.Printf("[mukaku] 带令牌请求详情失败（%v），改按游客模式重试", err)
+		apiResp, err = fetchDetail(ctx, reqCtx, idCode, false)
 	}
-
-	apiURL := fmt.Sprintf("%s?id=%s&app_id=%s&identity=%s%s", detailAPI, idCode, appID, identity, token)
-
-	log.Printf("[mukaku] 请求详情 API：%s", apiURL)
-	resp, err := shared.HTTPGetWithRetry(reqCtx, ctx.Client, apiURL, ctx.UserAgents, ctx.RetryMax, ctx.RetryInterval)
 	if err != nil {
-		return nil, fmt.Errorf("请求详情 API 失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
-	}
-
-	var apiResp DetailResponse
-	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
-		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
-	}
-
-	if !apiResp.Success || apiResp.Data == nil {
-		return nil, fmt.Errorf("API 返回失败: %s (code=%d)", apiResp.Message, apiResp.Code)
+		return nil, err
 	}
 
 	movie := apiResp.Data
@@ -107,8 +89,7 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string, eps i
 
 	log.Printf("[mukaku] 解析标题：%s, 分类数: %d, 种子数: %d", movie.Title, len(movie.Arrare), movie.Znum)
 
-	// 详情接口的种子列表（ecca）已 VIP 化，游客恒为空；
-	// 有 token 时走 ecca，否则回退到公开种子流 getTList 扫描
+	// ecca 带令牌时返回完整种子；为空（游客或无种子）则回退公开种子流扫描
 	var seedEntries []seedEntry
 	for _, seeds := range movie.Ecca {
 		for _, seed := range seeds {
@@ -145,6 +126,41 @@ func Scrape(ctx *shared.SiteContext, reqCtx context.Context, param string, eps i
 
 	pageInfo.Resources = shared.SortResources(pageInfo.Resources)
 	return pageInfo, nil
+}
+
+// fetchDetail 请求影片详情接口。withToken 为 true 时按站点前端的方式
+// 同时携带 access_token 参数与 Authorization 头（令牌为空则等同游客请求）
+func fetchDetail(ctx *shared.SiteContext, reqCtx context.Context, idCode string, withToken bool) (*DetailResponse, error) {
+	param := ""
+	var headers map[string]string
+	if withToken {
+		param = tokenParam(ctx)
+		headers = authHeaders(ctx)
+	}
+
+	apiURL := fmt.Sprintf("%s?id=%s&app_id=%s&identity=%s%s", detailAPI, idCode, appID, identity, param)
+
+	log.Printf("[mukaku] 请求详情 API：id=%s（带令牌: %v）", idCode, param != "")
+	resp, err := shared.HTTPGetWithHeaders(reqCtx, ctx.Client, apiURL, ctx.UserAgents, ctx.RetryMax, ctx.RetryInterval, headers)
+	if err != nil {
+		return nil, fmt.Errorf("请求详情 API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	var apiResp DetailResponse
+	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
+		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
+	}
+
+	if !apiResp.Success || apiResp.Data == nil {
+		return nil, fmt.Errorf("API 返回失败: %s (code=%d)", apiResp.Message, apiResp.Code)
+	}
+	return &apiResp, nil
 }
 
 // seedEntry 统一种子条目（ecca 与公开种子流）
